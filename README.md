@@ -1,2 +1,0 @@
-# kakoskonia
-Metroidvania unity game

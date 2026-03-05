@@ -1,0 +1,194 @@
+import {
+  MOVE_SPEED, JUMP_VEL, JUMP_CUT_VY, DOUBLE_JUMP_VEL,
+  GRAVITY_UP, GRAVITY_DOWN, MAX_FALL,
+  COYOTE_FRAMES, JUMP_BUFFER_FRAMES,
+  PLAYER_W, PLAYER_H,
+} from '../constants';
+import type { Rect, InputState, SpriteSheet, AnimState } from '../types';
+
+export class Player {
+  x: number;
+  y: number;
+  vx = 0;
+  vy = 0;
+  grounded = false;
+  facingLeft = true;   // sprites face LEFT by default
+
+  animState: AnimState = 'idle';
+  animFrame = 0;
+  animTimer = 0;
+
+  private coyoteTimer = 0;
+  private jumpBuffer = 0;
+  private doubleJumpAvailable = false;
+
+  sprites: Partial<Record<string, SpriteSheet>> = {};
+
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+
+  update(input: InputState, colliders: Rect[]) {
+    // ── Horizontal movement ────────────────────────────────────────────────
+    if (input.left) {
+      this.vx = -MOVE_SPEED;
+      this.facingLeft = true;
+    } else if (input.right) {
+      this.vx = MOVE_SPEED;
+      this.facingLeft = false;
+    } else {
+      this.vx = 0;
+    }
+
+    // ── Coyote time (allows jumping just after walking off an edge) ────────
+    if (this.grounded) {
+      this.coyoteTimer = COYOTE_FRAMES;
+      this.doubleJumpAvailable = true;
+    } else if (this.coyoteTimer > 0) {
+      this.coyoteTimer--;
+    }
+
+    // ── Jump buffer (queues jump if pressed slightly before landing) ───────
+    if (input.jumpJustPressed) {
+      this.jumpBuffer = JUMP_BUFFER_FRAMES;
+    } else if (this.jumpBuffer > 0) {
+      this.jumpBuffer--;
+    }
+
+    // ── Jump logic ─────────────────────────────────────────────────────────
+    if (input.jumpJustPressed) {
+      if (this.coyoteTimer > 0) {
+        // First jump (ground or coyote)
+        this.vy = JUMP_VEL;
+        this.grounded = false;
+        this.coyoteTimer = 0;
+        this.jumpBuffer = 0;
+      } else if (this.doubleJumpAvailable) {
+        // Double jump: triggered by a fresh press while in the air
+        this.vy = DOUBLE_JUMP_VEL;
+        this.doubleJumpAvailable = false;
+        this.jumpBuffer = 0;
+      }
+    }
+
+    // ── Variable jump height (jump cut on early release) ───────────────────
+    if (!input.jump && this.vy < JUMP_CUT_VY) {
+      this.vy = JUMP_CUT_VY;
+    }
+
+    // ── Gravity (asymmetric: lighter up, heavier down) ─────────────────────
+    const grav = this.vy < 0 ? GRAVITY_UP : GRAVITY_DOWN;
+    this.vy = Math.min(this.vy + grav, MAX_FALL);
+
+    // Fast fall
+    if (input.down && !this.grounded && this.vy > 0) {
+      this.vy = Math.min(this.vy + 0.6, MAX_FALL);
+    }
+
+    // ── Collision resolution ───────────────────────────────────────────────
+    this.resolveCollisions(colliders);
+
+    // ── Animation state machine ────────────────────────────────────────────
+    const newState: AnimState = !this.grounded
+      ? (this.vy < 0 ? 'jump' : 'fall')
+      : (Math.abs(this.vx) > 0.1 ? 'run' : 'idle');
+
+    if (newState !== this.animState) {
+      this.animState = newState;
+      this.animFrame = 0;
+      this.animTimer = 0;
+    }
+
+    // ── Advance animation frame ────────────────────────────────────────────
+    const spriteKey = this.animState === 'fall' ? 'jump' : this.animState;
+    const sheet = this.sprites[spriteKey];
+    if (sheet) {
+      this.animTimer++;
+      const interval = Math.max(1, Math.round(60 / sheet.fps));
+      if (this.animTimer >= interval) {
+        this.animTimer = 0;
+        if (this.animState === 'fall') {
+          // Hold in the latter half of the jump sheet
+          const fallStart = Math.floor(sheet.frames * 0.57);
+          this.animFrame = Math.min(this.animFrame + 1, sheet.frames - 1);
+          if (this.animFrame < fallStart) this.animFrame = fallStart;
+        } else {
+          // Loop: idle and run both cycle all frames continuously
+          this.animFrame = (this.animFrame + 1) % sheet.frames;
+        }
+      }
+    }
+  }
+
+  private resolveCollisions(colliders: Rect[]) {
+    // ── X ──────────────────────────────────────────────────────────────────
+    this.x += this.vx;
+    for (const r of colliders) {
+      if (!this.overlaps(r)) continue;
+      if (this.vx > 0) this.x = r.x - PLAYER_W;
+      else if (this.vx < 0) this.x = r.x + r.w;
+      this.vx = 0;
+    }
+
+    // ── Y ──────────────────────────────────────────────────────────────────
+    this.grounded = false;
+    this.y += this.vy;
+    for (const r of colliders) {
+      if (!this.overlaps(r)) continue;
+      if (this.vy >= 0) {
+        this.y = r.y - PLAYER_H;
+        this.grounded = true;
+      } else {
+        this.y = r.y + r.h;
+      }
+      this.vy = 0;
+    }
+  }
+
+  private overlaps(r: Rect): boolean {
+    return (
+      this.x < r.x + r.w &&
+      this.x + PLAYER_W > r.x &&
+      this.y < r.y + r.h &&
+      this.y + PLAYER_H > r.y
+    );
+  }
+
+  draw(ctx: CanvasRenderingContext2D, camX: number, camY: number) {
+    const spriteKey = this.animState === 'fall' ? 'jump' : this.animState;
+    const sheet = this.sprites[spriteKey];
+
+    if (!sheet) {
+      ctx.fillStyle = '#e74c3c';
+      ctx.fillRect(this.x - camX, this.y - camY, PLAYER_W, PLAYER_H);
+      return;
+    }
+
+    let frame = this.animFrame;
+    if (this.animState === 'fall') {
+      frame = Math.max(Math.floor(sheet.frames * 0.6), frame);
+      frame = Math.min(frame, sheet.frames - 1);
+    }
+
+    const sx    = frame * sheet.frameW;
+    const scale = PLAYER_H / sheet.frameH;
+    const dw    = sheet.frameW * scale;
+    const dh    = PLAYER_H;
+    const screenX = this.x - camX;
+    const screenY = this.y - camY;
+
+    // Sprites face LEFT by default — flip when facing right
+    ctx.save();
+    if (!this.facingLeft) {
+      ctx.translate(screenX + PLAYER_W / 2, screenY);
+      ctx.scale(-1, 1);
+      ctx.drawImage(sheet.canvas, sx, 0, sheet.frameW, sheet.frameH,
+        -dw / 2, 0, dw, dh);
+    } else {
+      ctx.drawImage(sheet.canvas, sx, 0, sheet.frameW, sheet.frameH,
+        screenX + PLAYER_W / 2 - dw / 2, screenY, dw, dh);
+    }
+    ctx.restore();
+  }
+}
