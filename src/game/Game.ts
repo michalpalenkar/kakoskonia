@@ -33,6 +33,9 @@ export class Game {
     left: false, right: false, jump: false, jumpJustPressed: false, down: false,
   };
 
+  // Touch input state (set externally by the UI overlay)
+  touch: { left: boolean; right: boolean; jump: boolean } = { left: false, right: false, jump: false };
+
   private accumulator = 0;
   private lastTime = 0;
   private rafId = 0;
@@ -133,11 +136,12 @@ export class Game {
       this.keys['x'] || this.keys['X'] ||
       this.keys[' '] ||
       this.keys['ArrowUp'] ||
-      this.keys['w'] || this.keys['W']
+      this.keys['w'] || this.keys['W'] ||
+      this.touch.jump
     );
     this.input = {
-      left:  !!(this.keys['ArrowLeft']  || this.keys['a'] || this.keys['A']),
-      right: !!(this.keys['ArrowRight'] || this.keys['d'] || this.keys['D']),
+      left:  !!(this.keys['ArrowLeft']  || this.keys['a'] || this.keys['A'] || this.touch.left),
+      right: !!(this.keys['ArrowRight'] || this.keys['d'] || this.keys['D'] || this.touch.right),
       jump,
       jumpJustPressed: jump && !this.prevJump,
       down:  !!(this.keys['ArrowDown']  || this.keys['s'] || this.keys['S']),
