@@ -18,6 +18,11 @@ export const JUMP_BUFFER_FRAMES = 8;
 // Double jump
 export const DOUBLE_JUMP_VEL = -12.5;  // slightly weaker than first jump
 
+// Dash
+export const DASH_SPEED = 15;
+export const DASH_FRAMES = 10;
+export const DASH_COOLDOWN_FRAMES = 24;
+
 // Player hitbox
 export const PLAYER_W = 52;
 export const PLAYER_H = 80;

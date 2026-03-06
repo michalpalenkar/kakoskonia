@@ -29,8 +29,12 @@ export class Game {
 
   private keys: Record<string, boolean> = {};
   private prevJump = false;
+  private prevDash = false;
   private input: InputState = {
-    left: false, right: false, jump: false, jumpJustPressed: false, down: false,
+    left: false, right: false,
+    jump: false, jumpJustPressed: false,
+    dash: false, dashJustPressed: false,
+    down: false,
   };
 
   private accumulator = 0;
@@ -135,14 +139,18 @@ export class Game {
       this.keys['ArrowUp'] ||
       this.keys['w'] || this.keys['W']
     );
+    const dash = !!(this.keys['c'] || this.keys['C']);
     this.input = {
       left:  !!(this.keys['ArrowLeft']  || this.keys['a'] || this.keys['A']),
       right: !!(this.keys['ArrowRight'] || this.keys['d'] || this.keys['D']),
       jump,
       jumpJustPressed: jump && !this.prevJump,
+      dash,
+      dashJustPressed: dash && !this.prevDash,
       down:  !!(this.keys['ArrowDown']  || this.keys['s'] || this.keys['S']),
     };
     this.prevJump = jump;
+    this.prevDash = dash;
   }
 
   private render(evw: number, evh: number) {
@@ -201,7 +209,7 @@ export class Game {
     ctx.fillStyle = 'rgba(220, 210, 200, 0.6)';
     ctx.font      = '12px monospace';
     ctx.textAlign = 'right';
-    ctx.fillText('WASD / Arrows · Jump: W/Space/Z · Double-jump: press again in air', vw - 14, 22);
+    ctx.fillText('WASD / Arrows · Jump: W/Space/Z · Dash: C · Double-jump: press again in air', vw - 14, 22);
   }
 
   private resizeCanvas = () => {
