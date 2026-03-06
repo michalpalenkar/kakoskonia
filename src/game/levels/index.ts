@@ -1,6 +1,7 @@
 import type { TileZone } from '../TileMap';
 import * as level1 from './level1';
 import * as level2 from './level2';
+import * as tami_level_backup from './tami_level_backup';
 
 export interface LevelData {
   id: number;
@@ -30,5 +31,14 @@ export const LEVELS: LevelData[] = [
     spawnX: level2.SPAWN_X,
     spawnY: level2.SPAWN_Y,
     zones: level2.LEVEL_ZONES,
+  },
+  {
+    id: 3,
+    name: 'Tami level backup',
+    cols: tami_level_backup.TILE_COLS,
+    rows: tami_level_backup.TILE_ROWS,
+    spawnX: tami_level_backup.SPAWN_X,
+    spawnY: tami_level_backup.SPAWN_Y,
+    zones: tami_level_backup.LEVEL_ZONES,
   },
 ];

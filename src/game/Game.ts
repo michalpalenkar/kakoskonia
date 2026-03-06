@@ -12,10 +12,28 @@ const tilemapUrl = new URL('../assets/kakoskonia_tilemap.png', import.meta.url).
 const idleUrl    = new URL('../assets/steady-sprite.png',      import.meta.url).href;
 const runUrl     = new URL('../assets/run-sprite.png',         import.meta.url).href;
 const jumpUrl    = new URL('../assets/jump-sprite.png',        import.meta.url).href;
+const natureUrls = [
+  new URL('../assets/nature/grass.png', import.meta.url).href,
+  new URL('../assets/nature/flower.png', import.meta.url).href,
+  new URL('../assets/nature/bush.png', import.meta.url).href,
+  new URL('../assets/nature/bush2.png', import.meta.url).href,
+  new URL('../assets/nature/bush3.png', import.meta.url).href,
+  new URL('../assets/nature/tree.png', import.meta.url).href,
+];
 
 /** Camera zoom — 1.25× makes the player appear 25% larger */
 const ZOOM = 1.25;
 const FIXED_DT = 1 / 60;
+const OVERLAY_DENSITY = 0.58;
+const FLOWER_ASSET_INDEX = 1; // natureUrls[1] === flower.png
+
+interface NatureOverlay {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  img: HTMLImageElement;
+}
 
 export class Game {
   private canvas: HTMLCanvasElement;
@@ -27,6 +45,8 @@ export class Game {
 
   private bgImg!: HTMLImageElement;
   private tilemapImg!: HTMLImageElement;
+  private natureImgs: HTMLImageElement[] = [];
+  private overlays: NatureOverlay[] = [];
 
   private keys: Record<string, boolean> = {};
   private prevJump = false;
@@ -57,20 +77,23 @@ export class Game {
   }
 
   async init() {
-    const [bgImg, tilemapImg, idleCanvas, runCanvas, jumpCanvas] = await Promise.all([
+    const [bgImg, tilemapImg, idleCanvas, runCanvas, jumpCanvas, ...natureImgs] = await Promise.all([
       loadImage(bgUrl),
       loadImage(tilemapUrl),
       loadSpriteTransparent(idleUrl),
       loadSpriteTransparent(runUrl),
       loadSpriteTransparent(jumpUrl),
+      ...natureUrls.map(loadImage),
     ]);
 
     this.bgImg      = bgImg;
     this.tilemapImg = tilemapImg;
+    this.natureImgs = natureImgs;
 
     // Build tile grid + collision rects
     this.tileMap = new TileMap(this.level.cols, this.level.rows, this.level.zones);
     const colliders = this.tileMap.buildCollisionRects();
+    this.overlays = this.buildNatureOverlays();
 
     // Sprite sheets
     // steady-sprite.png  4305 × 2114  3 frames  fps 8
@@ -190,6 +213,9 @@ export class Game {
     // Player
     this.player.draw(ctx, camX, camY);
 
+    // Foreground nature overlays
+    this.drawNatureOverlays(camX, camY, evw, evh);
+
     ctx.restore();
 
     this.drawHUD(vw);
@@ -242,8 +268,72 @@ export class Game {
   private onKeyUp = (e: KeyboardEvent) => {
     this.keys[e.key] = false;
   };
+
+  private buildNatureOverlays(): NatureOverlay[] {
+    if (this.natureImgs.length === 0) return [];
+    const overlays: NatureOverlay[] = [];
+    const rand = seededRand((this.level.id * 73856093) ^ (this.level.cols * 19349663) ^ (this.level.rows * 83492791));
+    const occupied = new Set<string>();
+    const flower = this.natureImgs[FLOWER_ASSET_INDEX] ?? this.natureImgs[0];
+    const globalScale = TILE_SIZE / Math.max(1, flower.naturalWidth);
+
+    for (let r = 0; r < this.level.rows; r++) {
+      for (let c = 0; c < this.level.cols; c++) {
+        if (!this.tileMap.isSolid(c, r)) continue;
+        if (this.tileMap.isSolid(c, r - 1)) continue; // only tile tops exposed to air
+        if (rand() > OVERLAY_DENSITY) continue;
+
+        const img = this.natureImgs[Math.floor(rand() * this.natureImgs.length)];
+        const targetW = img.naturalWidth * globalScale;
+        const targetH = img.naturalHeight * globalScale;
+        const widthTiles = Math.max(1, Math.ceil(targetW / TILE_SIZE));
+        const startCol = c - Math.floor((widthTiles - 1) / 2);
+        const endCol = startCol + widthTiles - 1;
+        if (startCol < 0 || endCol >= this.level.cols) continue;
+
+        let hasRoom = true;
+        for (let cc = startCol; cc <= endCol; cc++) {
+          if (!this.tileMap.isSolid(cc, r) || this.tileMap.isSolid(cc, r - 1) || occupied.has(`${r}:${cc}`)) {
+            hasRoom = false;
+            break;
+          }
+        }
+        if (!hasRoom) continue;
+
+        const embedY = 4 + rand() * 6;
+        for (let cc = startCol; cc <= endCol; cc++) occupied.add(`${r}:${cc}`);
+        overlays.push({
+          x: startCol * TILE_SIZE + (widthTiles * TILE_SIZE - targetW) / 2,
+          y: r * TILE_SIZE - targetH + embedY,
+          w: targetW,
+          h: targetH,
+          img,
+        });
+      }
+    }
+
+    return overlays;
+  }
+
+  private drawNatureOverlays(camX: number, camY: number, viewW: number, viewH: number) {
+    const { ctx } = this;
+    for (const o of this.overlays) {
+      if (o.x + o.w < camX || o.x > camX + viewW || o.y + o.h < camY || o.y > camY + viewH) continue;
+      ctx.drawImage(o.img, o.x - camX, o.y - camY, o.w, o.h);
+    }
+  }
 }
 
 function makeSheet(canvas: HTMLCanvasElement, frames: number, fps: number): SpriteSheet {
   return { canvas, frames, frameW: Math.floor(canvas.width / frames), frameH: canvas.height, fps };
+}
+
+function seededRand(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => {
+    s += 0x6d2b79f5;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t ^= t + Math.imul(t ^ (t >>> 7), 61 | t);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }
