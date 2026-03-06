@@ -25,5 +25,7 @@ export interface InputState {
   right: boolean;
   jump: boolean;
   jumpJustPressed: boolean;
+  dash: boolean;
+  dashJustPressed: boolean;
   down: boolean;
 }

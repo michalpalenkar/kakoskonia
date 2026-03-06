@@ -2,6 +2,7 @@ import {
   MOVE_SPEED, JUMP_VEL, JUMP_CUT_VY, DOUBLE_JUMP_VEL,
   GRAVITY_UP, GRAVITY_DOWN, MAX_FALL,
   COYOTE_FRAMES, JUMP_BUFFER_FRAMES,
+  DASH_SPEED, DASH_FRAMES, DASH_COOLDOWN_FRAMES,
   PLAYER_W, PLAYER_H,
 } from '../constants';
 import type { Rect, InputState, SpriteSheet, AnimState } from '../types';
@@ -21,6 +22,10 @@ export class Player {
   private coyoteTimer = 0;
   private jumpBuffer = 0;
   private doubleJumpAvailable = false;
+  private dashTimer = 0;
+  private dashCooldown = 0;
+  private airDashAvailable = true;
+  private dashDir = -1;
 
   sprites: Partial<Record<string, SpriteSheet>> = {};
 
@@ -30,8 +35,29 @@ export class Player {
   }
 
   update(input: InputState, colliders: Rect[]) {
+    if (this.dashCooldown > 0) this.dashCooldown--;
+
+    if (this.grounded) {
+      this.airDashAvailable = true;
+    }
+
+    if (input.dashJustPressed && this.dashTimer === 0 && this.dashCooldown === 0) {
+      const canDash = this.grounded || this.airDashAvailable;
+      if (canDash) {
+        if (!this.grounded) this.airDashAvailable = false;
+        this.dashDir = input.left ? -1 : input.right ? 1 : (this.facingLeft ? -1 : 1);
+        this.dashTimer = DASH_FRAMES;
+        this.dashCooldown = DASH_COOLDOWN_FRAMES;
+        this.vy = 0;
+      }
+    }
+
     // ── Horizontal movement ────────────────────────────────────────────────
-    if (input.left) {
+    if (this.dashTimer > 0) {
+      this.vx = this.dashDir * DASH_SPEED;
+      this.facingLeft = this.dashDir < 0;
+      this.dashTimer--;
+    } else if (input.left) {
       this.vx = -MOVE_SPEED;
       this.facingLeft = true;
     } else if (input.right) {
@@ -57,7 +83,7 @@ export class Player {
     }
 
     // ── Jump logic ─────────────────────────────────────────────────────────
-    if (input.jumpJustPressed) {
+    if (input.jumpJustPressed && this.dashTimer === 0) {
       if (this.coyoteTimer > 0) {
         // First jump (ground or coyote)
         this.vy = JUMP_VEL;
@@ -73,16 +99,18 @@ export class Player {
     }
 
     // ── Variable jump height (jump cut on early release) ───────────────────
-    if (!input.jump && this.vy < JUMP_CUT_VY) {
+    if (this.dashTimer === 0 && !input.jump && this.vy < JUMP_CUT_VY) {
       this.vy = JUMP_CUT_VY;
     }
 
     // ── Gravity (asymmetric: lighter up, heavier down) ─────────────────────
-    const grav = this.vy < 0 ? GRAVITY_UP : GRAVITY_DOWN;
-    this.vy = Math.min(this.vy + grav, MAX_FALL);
+    if (this.dashTimer === 0) {
+      const grav = this.vy < 0 ? GRAVITY_UP : GRAVITY_DOWN;
+      this.vy = Math.min(this.vy + grav, MAX_FALL);
+    }
 
     // Fast fall
-    if (input.down && !this.grounded && this.vy > 0) {
+    if (this.dashTimer === 0 && input.down && !this.grounded && this.vy > 0) {
       this.vy = Math.min(this.vy + 0.6, MAX_FALL);
     }
 
@@ -111,7 +139,8 @@ export class Player {
         if (this.animState === 'fall') {
           // Hold in the latter half of the jump sheet
           const fallStart = Math.floor(sheet.frames * 0.57);
-          this.animFrame = Math.min(this.animFrame + 1, sheet.frames - 1);
+          const fallEnd = Math.max(fallStart, sheet.frames - 2);
+          this.animFrame = Math.min(this.animFrame + 1, fallEnd);
           if (this.animFrame < fallStart) this.animFrame = fallStart;
         } else {
           // Loop: idle and run both cycle all frames continuously
@@ -168,7 +197,7 @@ export class Player {
     let frame = this.animFrame;
     if (this.animState === 'fall') {
       frame = Math.max(Math.floor(sheet.frames * 0.6), frame);
-      frame = Math.min(frame, sheet.frames - 1);
+      frame = Math.min(frame, Math.max(0, sheet.frames - 2));
     }
 
     const sx    = frame * sheet.frameW;
