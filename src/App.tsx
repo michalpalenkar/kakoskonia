@@ -1,42 +1,29 @@
 import { useState } from 'react'
 import { GameCanvas } from './components/GameCanvas'
 import { MapBuilder } from './components/MapBuilder'
+import { GameMenu } from './components/GameMenu'
+import type { LevelData } from './game/levels'
 
 const IS_DEV = import.meta.env.DEV
 
-function App() {
-  const [showMapBuilder, setShowMapBuilder] = useState(false)
+type Screen = { type: 'menu' } | { type: 'game'; level: LevelData } | { type: 'mapBuilder' }
 
-  if (showMapBuilder) {
-    return <MapBuilder onBack={() => setShowMapBuilder(false)} />
+function App() {
+  const [screen, setScreen] = useState<Screen>({ type: 'menu' })
+
+  if (screen.type === 'mapBuilder') {
+    return <MapBuilder onBack={() => setScreen({ type: 'menu' })} />
+  }
+
+  if (screen.type === 'game') {
+    return <GameCanvas level={screen.level} onBack={() => setScreen({ type: 'menu' })} />
   }
 
   return (
-    <div style={{ position: 'relative' }}>
-      <GameCanvas />
-      {IS_DEV && (
-        <button
-          onClick={() => setShowMapBuilder(true)}
-          style={{
-            position: 'fixed',
-            top: 16,
-            left: 16,
-            padding: '8px 16px',
-            background: 'rgba(20,20,36,0.88)',
-            color: '#aac',
-            border: '1px solid #556',
-            borderRadius: 6,
-            cursor: 'pointer',
-            fontSize: 12,
-            fontFamily: 'monospace',
-            backdropFilter: 'blur(4px)',
-            zIndex: 100,
-          }}
-        >
-          Map Builder
-        </button>
-      )}
-    </div>
+    <GameMenu
+      onPlay={(level) => setScreen({ type: 'game', level })}
+      onMapBuilder={IS_DEV ? () => setScreen({ type: 'mapBuilder' }) : undefined}
+    />
   )
 }
 

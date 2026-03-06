@@ -1,11 +1,11 @@
 import { Player } from './entities/Player';
 import { Camera } from './Camera';
 import { TileMap } from './TileMap';
-import { LEVEL_ZONES, TILE_COLS, TILE_ROWS, SPAWN_X, SPAWN_Y } from './levelData';
 import { PLAYER_W, PLAYER_H } from './constants';
 import { TILE_DSP as TILE_SIZE } from './AutoTile';
 import { loadImage, loadSpriteTransparent } from './spriteUtils';
 import type { InputState, SpriteSheet } from './types';
+import type { LevelData } from './levels';
 
 const bgUrl      = new URL('../assets/bg.png',                 import.meta.url).href;
 const tilemapUrl = new URL('../assets/kakoskonia_tilemap.png', import.meta.url).href;
@@ -42,10 +42,13 @@ export class Game {
   private rafId = 0;
   private running = false;
 
-  constructor(canvas: HTMLCanvasElement) {
+  private level: LevelData;
+
+  constructor(canvas: HTMLCanvasElement, level: LevelData) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d')!;
-    this.player = new Player(SPAWN_X, SPAWN_Y - PLAYER_H);
+    this.level = level;
+    this.player = new Player(level.spawnX, level.spawnY - PLAYER_H);
     this.camera = new Camera();
   }
 
@@ -62,7 +65,7 @@ export class Game {
     this.tilemapImg = tilemapImg;
 
     // Build tile grid + collision rects
-    this.tileMap = new TileMap(TILE_COLS, TILE_ROWS, LEVEL_ZONES);
+    this.tileMap = new TileMap(this.level.cols, this.level.rows, this.level.zones);
     const colliders = this.tileMap.buildCollisionRects();
 
     // Sprite sheets

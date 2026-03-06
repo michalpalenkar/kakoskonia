@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { getAutoTileSrc, drawAutoTile, TILE_DSP as T } from '../game/AutoTile';
+import {
+  listLevels, loadLevel, saveLevel, saveAsLevel, deleteLevel,
+  generateRandomLevel, type LevelInfo,
+} from './levelApi';
 
 const DEFAULT_COLS = 100;
 const DEFAULT_ROWS = 23;
@@ -67,6 +71,10 @@ function exportLevelData(
   const spawnRow = playerPos != null ? playerPos.row + 1 : Math.max(1, rows - 4);
 
   return [
+    `import { TILE_DSP } from '../AutoTile';`,
+    `import { z } from './levelTools';`,
+    `import type { TileZone } from './levelTools';`,
+    ``,
     `export const TILE_COLS = ${cols};`,
     `export const TILE_ROWS = ${rows};`,
     ``,
@@ -96,6 +104,17 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
   const toolRef = useRef<Tool>('tile');
 
   const [copied, setCopied] = useState(false);
+
+  // File management state
+  const [currentFilename, setCurrentFilename] = useState<string | null>(null);
+  const [showLoadModal, setShowLoadModal] = useState(false);
+  const [showSaveAsModal, setShowSaveAsModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [levelsList, setLevelsList] = useState<LevelInfo[]>([]);
+  const [loadSelected, setLoadSelected] = useState(0);
+  const [saveAsName, setSaveAsName] = useState('');
+  const [modalError, setModalError] = useState<string | null>(null);
+  const [statusMsg, setStatusMsg] = useState<string | null>(null);
 
   // drag state (mouse / single touch)
   const dragRef = useRef({
@@ -409,7 +428,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     const sx = e.clientX - rect.left;
     const sy = e.clientY - rect.top;
     const cam = camRef.current;
-    const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+    const factor = e.deltaY < 0 ? 1.06 : 1 / 1.06;
     const newZoom = Math.max(0.1, Math.min(6, cam.zoom * factor));
     const wx = cam.panX + sx / cam.zoom;
     const wy = cam.panY + sy / cam.zoom;
@@ -516,6 +535,144 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     toolRef.current = t;
   };
 
+  // ── file management actions ─────────────────────────────────────────────
+
+  const showStatus = (msg: string) => {
+    setStatusMsg(msg);
+    setTimeout(() => setStatusMsg(null), 2000);
+  };
+
+  const loadGridFromLevel = (data: LevelInfo) => {
+    const newGrid = new Set<string>();
+    for (const z of data.zones) {
+      for (let r = z.row; r < z.row + z.h; r++) {
+        for (let c = z.col; c < z.col + z.w; c++) {
+          newGrid.add(key(c, r));
+        }
+      }
+    }
+    gridRef.current = newGrid;
+    playerRef.current = { col: data.spawnCol, row: data.spawnRow - 1 };
+    colsRef.current = data.cols;
+    rowsRef.current = data.rows;
+    setCols(data.cols);
+    setRows(data.rows);
+    // reset camera
+    const z = Math.min(window.innerWidth / (data.cols * T), window.innerHeight / (data.rows * T)) * 0.9;
+    camRef.current = {
+      zoom: z,
+      panX: -(window.innerWidth / z - data.cols * T) / 2,
+      panY: -(window.innerHeight / z - data.rows * T) / 2,
+    };
+  };
+
+  const handleNew = () => {
+    setCurrentFilename(null);
+    colsRef.current = DEFAULT_COLS;
+    rowsRef.current = DEFAULT_ROWS;
+    setCols(DEFAULT_COLS);
+    setRows(DEFAULT_ROWS);
+    gridRef.current = buildInitialGrid(DEFAULT_COLS, DEFAULT_ROWS);
+    playerRef.current = null;
+    const z = Math.min(window.innerWidth / (DEFAULT_COLS * T), window.innerHeight / (DEFAULT_ROWS * T)) * 0.9;
+    camRef.current = {
+      zoom: z,
+      panX: -(window.innerWidth / z - DEFAULT_COLS * T) / 2,
+      panY: -(window.innerHeight / z - DEFAULT_ROWS * T) / 2,
+    };
+    showStatus('New level');
+  };
+
+  const handleLoad = async () => {
+    try {
+      const levels = await listLevels();
+      setLevelsList(levels);
+      setLoadSelected(0);
+      setModalError(null);
+      setShowLoadModal(true);
+    } catch (e) {
+      showStatus('Failed to load levels list');
+    }
+  };
+
+  const handleLoadSelect = async (filename: string) => {
+    try {
+      const data = await loadLevel(filename);
+      loadGridFromLevel(data);
+      setCurrentFilename(filename);
+      setShowLoadModal(false);
+      showStatus(`Loaded ${filename}`);
+    } catch (e) {
+      setModalError(String(e));
+    }
+  };
+
+  const handleSave = async () => {
+    if (!currentFilename) {
+      setShowSaveAsModal(true);
+      setSaveAsName('');
+      setModalError(null);
+      return;
+    }
+    try {
+      const content = exportLevelData(gridRef.current, playerRef.current, colsRef.current, rowsRef.current);
+      await saveLevel(currentFilename, content);
+      showStatus(`Saved ${currentFilename}`);
+    } catch (e) {
+      showStatus(`Save failed: ${e}`);
+    }
+  };
+
+  const handleSaveAs = async () => {
+    setSaveAsName('');
+    setModalError(null);
+    setShowSaveAsModal(true);
+  };
+
+  const handleSaveAsConfirm = async () => {
+    if (!saveAsName.trim()) { setModalError('Name is required'); return; }
+    try {
+      const content = exportLevelData(gridRef.current, playerRef.current, colsRef.current, rowsRef.current);
+      const filename = await saveAsLevel(saveAsName.trim(), content);
+      setCurrentFilename(filename);
+      setShowSaveAsModal(false);
+      showStatus(`Saved as ${filename}`);
+    } catch (e) {
+      setModalError(String(e));
+    }
+  };
+
+  const handleGenerate = () => {
+    const { grid, playerCol, playerRow } = generateRandomLevel(colsRef.current, rowsRef.current);
+    gridRef.current = grid;
+    playerRef.current = { col: playerCol, row: playerRow };
+    showStatus('Generated random level');
+  };
+
+  const handleDeleteStart = async () => {
+    if (!currentFilename) { showStatus('No level loaded to delete'); return; }
+    try {
+      const levels = await listLevels();
+      setLevelsList(levels);
+      setModalError(null);
+      setShowDeleteModal(true);
+    } catch (e) {
+      showStatus('Failed to fetch levels');
+    }
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!currentFilename) return;
+    try {
+      await deleteLevel(currentFilename);
+      setShowDeleteModal(false);
+      showStatus(`Deleted ${currentFilename}`);
+      handleNew();
+    } catch (e) {
+      setModalError(String(e));
+    }
+  };
+
   // ── styles ────────────────────────────────────────────────────────────────
 
   const btnBase: React.CSSProperties = {
@@ -545,7 +702,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
         onTouchEnd={onTouchEnd}
       />
 
-      {/* Tool selector — top left */}
+      {/* File management + tool selector — top left */}
       <div style={{
         position: 'absolute', top: 16, left: 16,
         display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 8,
@@ -553,8 +710,43 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
         border: '1px solid #444', borderRadius: 8, padding: '8px 10px',
         backdropFilter: 'blur(4px)',
       }}>
+        {/* File buttons */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ color: '#888', fontSize: 11, fontFamily: 'monospace' }}>FILE</span>
+          {([
+            ['New', handleNew, false],
+            ['Load', handleLoad, false],
+            ['Save', handleSave, true],
+            ['Save As', handleSaveAs, false],
+            ['Regenerate', handleGenerate, false],
+            ['Delete', handleDeleteStart, true],
+          ] as [string, () => void, boolean][])
+            .filter(([, , needsLoaded]) => !needsLoaded || currentFilename)
+            .map(([label, handler]) => (
+            <button
+              key={label}
+              onClick={handler}
+              style={{
+                ...btnBase,
+                padding: '4px 10px',
+                fontSize: 11,
+                background: label === 'Delete' ? 'rgba(80,20,20,0.8)' : 'rgba(40,40,60,0.8)',
+                border: `1px solid ${label === 'Delete' ? '#633' : '#3a3a55'}`,
+                color: label === 'Delete' ? '#e88' : '#ccc',
+              }}
+            >
+              {label}
+            </button>
+          ))}
+          {currentFilename && (
+            <span style={{ color: '#7a8', fontSize: 11, fontFamily: 'monospace', marginLeft: 8 }}>
+              [{currentFilename}]
+            </span>
+          )}
+        </div>
+
         <div style={{ color: '#b8c7ff', fontSize: 11, fontFamily: 'monospace' }}>
-          Level size: {cols} cols × {rows} rows
+          Level size: {cols} cols x {rows} rows
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ color: '#888', fontSize: 11, fontFamily: 'monospace' }}>TOOL</span>
@@ -574,35 +766,150 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
           </button>
         ))}
         <span style={{ color: '#555', fontSize: 11, fontFamily: 'monospace', marginLeft: 8 }}>
-          Scroll=zoom · RMB=pan · Drag blue right/bottom edge to resize
+          Scroll=zoom / RMB=pan / Drag blue edge to resize
         </span>
         </div>
       </div>
+
+      {/* Status message — top center */}
+      {statusMsg && (
+        <div style={{
+          position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)',
+          padding: '8px 20px', background: 'rgba(30,100,60,0.92)', color: '#7fe8a0',
+          border: '1px solid #3a8a5a', borderRadius: 6, fontSize: 13, fontFamily: 'monospace',
+          backdropFilter: 'blur(4px)', zIndex: 20,
+        }}>
+          {statusMsg}
+        </div>
+      )}
 
       {/* Back button — top right */}
       <button
         onClick={onBack}
         style={{ ...btnBase, position: 'absolute', top: 16, right: 16 }}
       >
-        ← Back to Game
+        Back to Menu
       </button>
 
-      {/* Copy level data — bottom right */}
-      <button
-        onClick={copyLevelData}
-        style={{
-          ...btnBase,
-          position: 'absolute', bottom: 16, right: 16,
-          background: copied ? 'rgba(30,100,60,0.92)' : 'rgba(20,20,36,0.92)',
-          color: copied ? '#7fe8a0' : '#ccc',
-          border: `1px solid ${copied ? '#3a8a5a' : '#444'}`,
-          padding: '10px 20px',
-          fontSize: 14,
-          transition: 'background 0.2s, color 0.2s, border-color 0.2s',
-        }}
-      >
-        {copied ? '✓ Copied to clipboard!' : 'Copy Level Data'}
-      </button>
+      {/* ── Load Modal ─────────────────────────────────────────────────── */}
+      {showLoadModal && (
+        <div style={modalOverlay} onClick={() => setShowLoadModal(false)}>
+          <div style={modalBox} onClick={e => e.stopPropagation()}>
+            <h3 style={modalTitle}>Load Level</h3>
+            {modalError && <div style={modalErrorStyle}>{modalError}</div>}
+            {levelsList.length === 0 ? (
+              <p style={{ color: '#888', fontSize: 13 }}>No levels found.</p>
+            ) : (
+              <select
+                value={loadSelected}
+                onChange={e => setLoadSelected(Number(e.target.value))}
+                style={{
+                  width: '100%', padding: '10px 12px', background: 'rgba(10,10,20,0.9)',
+                  border: '1px solid #556', borderRadius: 6, color: '#ddd', fontSize: 14,
+                  fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box',
+                }}
+              >
+                {levelsList.map((l, i) => (
+                  <option key={l.filename} value={i}>
+                    {l.filename} ({l.cols}x{l.rows})
+                  </option>
+                ))}
+              </select>
+            )}
+            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+              {levelsList.length > 0 && (
+                <button
+                  onClick={() => handleLoadSelect(levelsList[loadSelected].filename)}
+                  style={{ ...btnBase, background: '#3a5fc8', color: '#fff', border: '1px solid #5a7fe8' }}
+                >
+                  Load
+                </button>
+              )}
+              <button onClick={() => setShowLoadModal(false)} style={btnBase}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Save As Modal ──────────────────────────────────────────────── */}
+      {showSaveAsModal && (
+        <div style={modalOverlay} onClick={() => setShowSaveAsModal(false)}>
+          <div style={modalBox} onClick={e => e.stopPropagation()}>
+            <h3 style={modalTitle}>Save As</h3>
+            {modalError && <div style={modalErrorStyle}>{modalError}</div>}
+            <input
+              type="text"
+              placeholder="Level name (e.g. forest_ruins)"
+              value={saveAsName}
+              onChange={e => { setSaveAsName(e.target.value); setModalError(null); }}
+              autoFocus
+              onKeyDown={e => { if (e.key === 'Enter') handleSaveAsConfirm(); }}
+              style={{
+                width: '100%', padding: '10px 12px', background: 'rgba(10,10,20,0.9)',
+                border: '1px solid #556', borderRadius: 6, color: '#ddd', fontSize: 14,
+                fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box',
+              }}
+            />
+            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+              <button onClick={handleSaveAsConfirm} style={{ ...btnBase, background: '#3a5fc8', color: '#fff', border: '1px solid #5a7fe8' }}>
+                Save
+              </button>
+              <button onClick={() => setShowSaveAsModal(false)} style={btnBase}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Delete Confirmation Modal ──────────────────────────────────── */}
+      {showDeleteModal && (
+        <div style={modalOverlay} onClick={() => setShowDeleteModal(false)}>
+          <div style={modalBox} onClick={e => e.stopPropagation()}>
+            <h3 style={{ ...modalTitle, color: '#e88' }}>Delete Level</h3>
+            {modalError && <div style={modalErrorStyle}>{modalError}</div>}
+            <p style={{ color: '#ccc', fontSize: 14, fontFamily: 'monospace', margin: '12px 0' }}>
+              Are you sure you want to delete <strong style={{ color: '#fff' }}>{currentFilename}</strong>?
+              <br />This will remove the file and update all exports. This cannot be undone.
+            </p>
+            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+              <button
+                onClick={handleDeleteConfirm}
+                style={{ ...btnBase, background: 'rgba(180,40,40,0.9)', color: '#fff', border: '1px solid #a33' }}
+              >
+                Yes, Delete
+              </button>
+              <button onClick={() => setShowDeleteModal(false)} style={btnBase}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
+// ── Modal styles ─────────────────────────────────────────────────────────────
+
+const modalOverlay: React.CSSProperties = {
+  position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+  display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50,
+};
+
+const modalBox: React.CSSProperties = {
+  background: 'rgba(20,20,36,0.98)', border: '1px solid #556', borderRadius: 12,
+  padding: '24px 28px', minWidth: 320, maxWidth: 420, fontFamily: 'monospace',
+  backdropFilter: 'blur(8px)',
+};
+
+const modalTitle: React.CSSProperties = {
+  color: '#c8b8e8', fontSize: 20, marginTop: 0, marginBottom: 16,
+};
+
+const modalErrorStyle: React.CSSProperties = {
+  color: '#e88', fontSize: 12, marginBottom: 12, padding: '6px 10px',
+  background: 'rgba(180,40,40,0.2)', borderRadius: 4, border: '1px solid #633',
+};

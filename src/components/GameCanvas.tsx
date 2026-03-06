@@ -1,7 +1,13 @@
 import { useEffect, useRef } from 'react';
 import { Game } from '../game/Game';
+import type { LevelData } from '../game/levels';
 
-export function GameCanvas() {
+interface Props {
+  level: LevelData;
+  onBack: () => void;
+}
+
+export function GameCanvas({ level, onBack }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef   = useRef<Game | null>(null);
 
@@ -9,7 +15,7 @@ export function GameCanvas() {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const game = new Game(canvas);
+    const game = new Game(canvas, level);
     gameRef.current = game;
     let started = false;
 
@@ -22,7 +28,7 @@ export function GameCanvas() {
       if (started) game.stop();
       gameRef.current = null;
     };
-  }, []);
+  }, [level]);
 
   function makeTouch(key: 'left' | 'right' | 'jump') {
     return {
@@ -66,6 +72,27 @@ export function GameCanvas() {
         ref={canvasRef}
         style={{ display: 'block', width: '100%', height: '100%' }}
       />
+
+      <button
+        onClick={onBack}
+        style={{
+          position: 'absolute',
+          top: 16,
+          left: 16,
+          padding: '8px 16px',
+          background: 'rgba(20,20,36,0.88)',
+          color: '#aac',
+          border: '1px solid #556',
+          borderRadius: 6,
+          cursor: 'pointer',
+          fontSize: 12,
+          fontFamily: 'monospace',
+          backdropFilter: 'blur(4px)',
+          zIndex: 10,
+        }}
+      >
+        Menu
+      </button>
 
       <div className="touch-controls">
         {/* Left button */}
