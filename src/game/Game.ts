@@ -2,7 +2,8 @@ import { Player } from './entities/Player';
 import { Camera } from './Camera';
 import { TileMap } from './TileMap';
 import { LEVEL_ZONES, TILE_COLS, TILE_ROWS, SPAWN_X, SPAWN_Y } from './levelData';
-import { WORLD_W, WORLD_H, PLAYER_W, PLAYER_H } from './constants';
+import { PLAYER_W, PLAYER_H } from './constants';
+import { TILE_DSP as TILE_SIZE } from './AutoTile';
 import { loadImage, loadSpriteTransparent } from './spriteUtils';
 import type { InputState, SpriteSheet } from './types';
 
@@ -79,10 +80,14 @@ export class Game {
     this._colliders = colliders;
 
     this.resizeCanvas();
+    const worldW = this.tileMap.cols * TILE_SIZE;
+    const worldH = this.tileMap.rows * TILE_SIZE;
     this.camera.snap(
       this.player.x, this.player.y, PLAYER_W, PLAYER_H,
       this.canvas.width  / ZOOM,
       this.canvas.height / ZOOM,
+      worldW,
+      worldH,
     );
 
     window.addEventListener('keydown', this.onKeyDown);
@@ -115,18 +120,20 @@ export class Game {
 
     const evw = this.canvas.width  / ZOOM;
     const evh = this.canvas.height / ZOOM;
+    const worldW = this.tileMap.cols * TILE_SIZE;
+    const worldH = this.tileMap.rows * TILE_SIZE;
 
     while (this.accumulator >= FIXED_DT) {
       this.updateInput();
       this.player.update(this.input, this._colliders);
       this.camera.update(
         this.player.x, this.player.y, PLAYER_W, PLAYER_H,
-        evw, evh, this.player.facingLeft,
+        evw, evh, this.player.facingLeft, worldW, worldH,
       );
       this.accumulator -= FIXED_DT;
     }
 
-    this.render(evw, evh);
+    this.render(evw, evh, worldW, worldH);
     this.rafId = requestAnimationFrame(this.loop);
   };
 
@@ -149,7 +156,7 @@ export class Game {
     this.prevJump = jump;
   }
 
-  private render(evw: number, evh: number) {
+  private render(evw: number, evh: number, worldW: number, worldH: number) {
     const { ctx, canvas } = this;
     const vw   = canvas.width;
     const vh   = canvas.height;
@@ -157,7 +164,7 @@ export class Game {
     const camY = this.camera.y;
 
     ctx.clearRect(0, 0, vw, vh);
-    this.drawBg(camX, camY, vw, vh);
+    this.drawBg(camX, camY, vw, vh, worldW, worldH);
 
     ctx.save();
     ctx.scale(ZOOM, ZOOM);
@@ -177,18 +184,20 @@ export class Game {
     this.drawHUD(vw);
   }
 
-  private drawBg(camX: number, camY: number, vw: number, vh: number) {
+  private drawBg(camX: number, camY: number, vw: number, vh: number, worldW: number, worldH: number) {
     const { ctx, bgImg } = this;
     const scale  = Math.max(vw / bgImg.naturalWidth, vh / bgImg.naturalHeight);
     const drawW  = bgImg.naturalWidth  * scale;
     const drawH  = bgImg.naturalHeight * scale;
 
     const maxOffsetX = drawW - vw;
-    const tx         = Math.max(0, Math.min(camX / (WORLD_W - vw / ZOOM), 1));
+    const txDenom    = Math.max(1, worldW - vw / ZOOM);
+    const tx         = Math.max(0, Math.min(camX / txDenom, 1));
     const offsetX    = -(tx * maxOffsetX * 0.4);
 
     const maxOffsetY = Math.max(0, drawH - vh);
-    const ty         = Math.max(0, Math.min(camY / (WORLD_H - vh / ZOOM), 1));
+    const tyDenom    = Math.max(1, worldH - vh / ZOOM);
+    const ty         = Math.max(0, Math.min(camY / tyDenom, 1));
     const offsetY    = -(ty * maxOffsetY * 0.15);
 
     ctx.drawImage(bgImg, offsetX, offsetY, drawW, drawH);
