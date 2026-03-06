@@ -1,9 +1,11 @@
 import type { Plugin } from 'vite';
-import fs from 'node:fs';
-import path from 'node:path';
+import { readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync } from 'node:fs';
+import { resolve, join } from 'node:path';
+import { IncomingMessage, ServerResponse } from 'node:http';
+import type { Server } from 'node:http';
 
-const LEVELS_DIR = path.resolve(__dirname, 'src/game/levels');
-const INDEX_FILE = path.join(LEVELS_DIR, 'index.ts');
+const LEVELS_DIR = resolve(__dirname, 'src/game/levels');
+const INDEX_FILE = join(LEVELS_DIR, 'index.ts');
 
 function slugify(name: string): string {
   return name
@@ -13,8 +15,7 @@ function slugify(name: string): string {
 }
 
 function getLevelFiles(): string[] {
-  return fs
-    .readdirSync(LEVELS_DIR)
+  return readdirSync(LEVELS_DIR)
     .filter(f => /^level\d+\.ts$/.test(f) || (/\.ts$/.test(f) && f !== 'index.ts' && f !== 'levelTools.ts'))
     .map(f => f.replace('.ts', ''));
 }
@@ -27,9 +28,9 @@ function parseLevelFile(filename: string): {
   spawnRow: number;
   zones: { col: number; row: number; w: number; h: number }[];
 } | null {
-  const filepath = path.join(LEVELS_DIR, `${filename}.ts`);
-  if (!fs.existsSync(filepath)) return null;
-  const content = fs.readFileSync(filepath, 'utf-8');
+  const filepath = join(LEVELS_DIR, `${filename}.ts`);
+  if (!existsSync(filepath)) return null;
+  const content = readFileSync(filepath, 'utf-8');
 
   const colsMatch = content.match(/TILE_COLS\s*=\s*(\d+)/);
   const rowsMatch = content.match(/TILE_ROWS\s*=\s*(\d+)/);
@@ -82,14 +83,14 @@ export const LEVELS: LevelData[] = [
 ${entries}
 ];
 `;
-  fs.writeFileSync(INDEX_FILE, content);
+  writeFileSync(INDEX_FILE, content);
 }
 
 export default function levelsPlugin(): Plugin {
   return {
     name: 'vite-plugin-levels',
     configureServer(server) {
-      server.middlewares.use('/api/levels', (req, res) => {
+      server.middlewares.use('/api/levels', (req: any, res: any) => {
         res.setHeader('Content-Type', 'application/json');
 
         // GET /api/levels — list all levels
@@ -122,13 +123,13 @@ export default function levelsPlugin(): Plugin {
             try {
               const { name, content } = JSON.parse(body);
               const slug = slugify(name);
-              const filepath = path.join(LEVELS_DIR, `${slug}.ts`);
-              if (fs.existsSync(filepath)) {
+              const filepath = join(LEVELS_DIR, `${slug}.ts`);
+              if (existsSync(filepath)) {
                 res.statusCode = 409;
                 res.end(JSON.stringify({ error: 'A level with this name already exists' }));
                 return;
               }
-              fs.writeFileSync(filepath, content);
+              writeFileSync(filepath, content);
               rebuildIndex();
               res.end(JSON.stringify({ ok: true, filename: slug }));
             } catch (e) {
@@ -146,8 +147,8 @@ export default function levelsPlugin(): Plugin {
           req.on('end', () => {
             try {
               const { filename, content } = JSON.parse(body);
-              const filepath = path.join(LEVELS_DIR, `${filename}.ts`);
-              fs.writeFileSync(filepath, content);
+              const filepath = join(LEVELS_DIR, `${filename}.ts`);
+              writeFileSync(filepath, content);
               rebuildIndex();
               res.end(JSON.stringify({ ok: true }));
             } catch (e) {
@@ -165,13 +166,13 @@ export default function levelsPlugin(): Plugin {
           req.on('end', () => {
             try {
               const { filename } = JSON.parse(body);
-              const filepath = path.join(LEVELS_DIR, `${filename}.ts`);
-              if (!fs.existsSync(filepath)) {
+              const filepath = join(LEVELS_DIR, `${filename}.ts`);
+              if (!existsSync(filepath)) {
                 res.statusCode = 404;
                 res.end(JSON.stringify({ error: 'not found' }));
                 return;
               }
-              fs.unlinkSync(filepath);
+              unlinkSync(filepath);
               rebuildIndex();
               res.end(JSON.stringify({ ok: true }));
             } catch (e) {
