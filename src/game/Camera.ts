@@ -1,4 +1,4 @@
-import { CAM_LERP, CAM_LEAD_X, CAM_Y_OFFSET, WORLD_W, WORLD_H } from './constants';
+import { CAM_LERP, CAM_LEAD_X, CAM_Y_OFFSET } from './constants';
 
 export class Camera {
   x = 0;
@@ -11,7 +11,9 @@ export class Camera {
     playerH: number,
     viewW: number,
     viewH: number,
-    facingLeft: boolean
+    facingLeft: boolean,
+    worldW: number,
+    worldH: number,
   ) {
     const lead = facingLeft ? -CAM_LEAD_X : CAM_LEAD_X;
     const targetX = playerX + playerW / 2 - viewW / 2 + lead;
@@ -21,8 +23,8 @@ export class Camera {
     this.y += (targetY - this.y) * CAM_LERP;
 
     // Clamp to world bounds
-    this.x = Math.max(0, Math.min(this.x, WORLD_W - viewW));
-    this.y = Math.max(0, Math.min(this.y, WORLD_H - viewH));
+    this.x = Math.max(0, Math.min(this.x, worldW - viewW));
+    this.y = Math.max(0, Math.min(this.y, worldH - viewH));
   }
 
   snap(
@@ -31,9 +33,11 @@ export class Camera {
     playerW: number,
     playerH: number,
     viewW: number,
-    viewH: number
+    viewH: number,
+    worldW: number,
+    worldH: number,
   ) {
-    this.x = Math.max(0, Math.min(playerX + playerW / 2 - viewW / 2, WORLD_W - viewW));
-    this.y = Math.max(0, Math.min(playerY + playerH / 2 - viewH * CAM_Y_OFFSET, WORLD_H - viewH));
+    this.x = Math.max(0, Math.min(playerX + playerW / 2 - viewW / 2, worldW - viewW));
+    this.y = Math.max(0, Math.min(playerY + playerH / 2 - viewH * CAM_Y_OFFSET, worldH - viewH));
   }
 }
