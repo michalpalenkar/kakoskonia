@@ -4,7 +4,7 @@ import type { LevelData } from '../game/levels';
 
 interface Props {
   level: LevelData;
-  onBack: () => void;
+  onBack?: () => void;
 }
 
 export function GameCanvas({ level, onBack }: Props) {
@@ -73,26 +73,28 @@ export function GameCanvas({ level, onBack }: Props) {
         style={{ display: 'block', width: '100%', height: '100%' }}
       />
 
-      <button
-        onClick={onBack}
-        style={{
-          position: 'absolute',
-          top: 16,
-          left: 16,
-          padding: '8px 16px',
-          background: 'rgba(20,20,36,0.88)',
-          color: '#aac',
-          border: '1px solid #556',
-          borderRadius: 6,
-          cursor: 'pointer',
-          fontSize: 12,
-          fontFamily: 'monospace',
-          backdropFilter: 'blur(4px)',
-          zIndex: 10,
-        }}
-      >
-        Menu
-      </button>
+      {onBack && (
+        <button
+          onClick={onBack}
+          style={{
+            position: 'absolute',
+            top: 16,
+            left: 16,
+            padding: '8px 16px',
+            background: 'rgba(20,20,36,0.88)',
+            color: '#aac',
+            border: '1px solid #556',
+            borderRadius: 6,
+            cursor: 'pointer',
+            fontSize: 12,
+            fontFamily: 'monospace',
+            backdropFilter: 'blur(4px)',
+            zIndex: 10,
+          }}
+        >
+          Menu
+        </button>
+      )}
 
       <div className="touch-controls">
         {/* Left button */}

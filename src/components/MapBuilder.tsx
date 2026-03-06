@@ -27,12 +27,11 @@ function buildInitialGrid(cols: number, rows: number): Set<string> {
   return g;
 }
 
-function exportLevelData(
+function extractZones(
   grid: Set<string>,
-  playerPos: { col: number; row: number } | null,
   cols: number,
   rows: number,
-): string {
+): { col: number; row: number; w: number; h: number }[] {
   const cells: boolean[][] = Array.from({ length: rows }, () => new Array(cols).fill(false));
   for (const k of grid) {
     const [c, r] = k.split(',').map(Number);
@@ -60,6 +59,16 @@ function exportLevelData(
       zones.push({ col: c, row: r, w, h });
     }
   }
+  return zones;
+}
+
+function exportLevelData(
+  grid: Set<string>,
+  playerPos: { col: number; row: number } | null,
+  cols: number,
+  rows: number,
+): string {
+  const zones = extractZones(grid, cols, rows);
 
   const pad = (n: number, len: number) => String(n).padStart(len);
   const zonesStr = zones
@@ -102,6 +111,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
 
   const [tool, setTool] = useState<Tool>('tile');
   const toolRef = useRef<Tool>('tile');
+  const [hasPlayer, setHasPlayer] = useState(false);
 
   // File management state
   const [currentFilename, setCurrentFilename] = useState<string | null>(null);
@@ -190,6 +200,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
         col: Math.max(0, Math.min(safeCols - 1, player.col)),
         row: Math.max(0, Math.min(safeRows - 1, player.row)),
       };
+      setHasPlayer(true);
     }
 
     colsRef.current = safeCols;
@@ -377,7 +388,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     }
 
     if (toolRef.current === 'player') {
-      if (col >= 0 && col < colsRef.current && row >= 0 && row < rowsRef.current) playerRef.current = { col, row };
+      if (col >= 0 && col < colsRef.current && row >= 0 && row < rowsRef.current) { playerRef.current = { col, row }; setHasPlayer(true); }
       return;
     }
     startDrag(col, row);
@@ -467,7 +478,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       const { wx, wy } = screenToWorld(t.x - rect.left, t.y - rect.top);
       const { col, row } = worldToGrid(wx, wy);
       if (toolRef.current === 'player') {
-        if (col >= 0 && col < colsRef.current && row >= 0 && row < rowsRef.current) playerRef.current = { col, row };
+        if (col >= 0 && col < colsRef.current && row >= 0 && row < rowsRef.current) { playerRef.current = { col, row }; setHasPlayer(true); }
         return;
       }
       startDrag(col, row);
@@ -541,6 +552,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     }
     gridRef.current = newGrid;
     playerRef.current = { col: data.spawnCol, row: data.spawnRow - 1 };
+    setHasPlayer(true);
     colsRef.current = data.cols;
     rowsRef.current = data.rows;
     setCols(data.cols);
@@ -562,6 +574,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     setRows(DEFAULT_ROWS);
     gridRef.current = buildInitialGrid(DEFAULT_COLS, DEFAULT_ROWS);
     playerRef.current = null;
+    setHasPlayer(false);
     const z = Math.min(window.innerWidth / (DEFAULT_COLS * T), window.innerHeight / (DEFAULT_ROWS * T)) * 0.9;
     camRef.current = {
       zoom: z,
@@ -634,6 +647,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     const { grid, playerCol, playerRow } = generateRandomLevel(colsRef.current, rowsRef.current);
     gridRef.current = grid;
     playerRef.current = { col: playerCol, row: playerRow };
+    setHasPlayer(true);
     showStatus('Generated random level');
   };
 
@@ -659,6 +673,24 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     } catch (e) {
       setModalError(String(e));
     }
+  };
+
+  const handleTryPlay = () => {
+    const zones = extractZones(gridRef.current, colsRef.current, rowsRef.current);
+    const spawnCol = playerRef.current?.col ?? 5;
+    const spawnRow = playerRef.current != null ? playerRef.current.row + 1 : Math.max(1, rowsRef.current - 4);
+    const levelData = {
+      id: 0,
+      name: currentFilename || 'Test Level',
+      cols: colsRef.current,
+      rows: rowsRef.current,
+      spawnX: spawnCol * T,
+      spawnY: spawnRow * T - 1,
+      zones,
+    };
+    const encoded = btoa(JSON.stringify(levelData));
+    const base = window.location.pathname;
+    window.open(`${base}?play=${encoded}`, '_blank');
   };
 
   // ── styles ────────────────────────────────────────────────────────────────
@@ -702,30 +734,35 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <span style={{ color: '#888', fontSize: 11, fontFamily: 'monospace' }}>FILE</span>
           {([
-            ['New', handleNew, false],
-            ['Load', handleLoad, false],
-            ['Save', handleSave, true],
-            ['Save As', handleSaveAs, false],
-            ['Regenerate', handleGenerate, false],
-            ['Delete', handleDeleteStart, true],
-          ] as [string, () => void, boolean][])
+            ['New', handleNew, false, false],
+            ['Load', handleLoad, false, false],
+            ['Save', handleSave, true, true],
+            ['Save As', handleSaveAs, false, true],
+            ['Regenerate', handleGenerate, false, false],
+            ['Delete', handleDeleteStart, true, false],
+          ] as [string, () => void, boolean, boolean][])
             .filter(([, , needsLoaded]) => !needsLoaded || currentFilename)
-            .map(([label, handler]) => (
-            <button
-              key={label}
-              onClick={handler}
-              style={{
-                ...btnBase,
-                padding: '4px 10px',
-                fontSize: 11,
-                background: label === 'Delete' ? 'rgba(80,20,20,0.8)' : 'rgba(40,40,60,0.8)',
-                border: `1px solid ${label === 'Delete' ? '#633' : '#3a3a55'}`,
-                color: label === 'Delete' ? '#e88' : '#ccc',
-              }}
-            >
-              {label}
-            </button>
-          ))}
+            .map(([label, handler, , needsPlayer]) => {
+              const disabled = needsPlayer && !hasPlayer;
+              return (
+                <button
+                  key={label}
+                  onClick={disabled ? undefined : handler}
+                  title={disabled ? 'Place a player spawn first' : undefined}
+                  style={{
+                    ...btnBase,
+                    padding: '4px 10px',
+                    fontSize: 11,
+                    background: label === 'Delete' ? 'rgba(80,20,20,0.8)' : 'rgba(40,40,60,0.8)',
+                    border: `1px solid ${label === 'Delete' ? '#633' : '#3a3a55'}`,
+                    color: label === 'Delete' ? '#e88' : '#ccc',
+                    ...(disabled ? { opacity: 0.4, cursor: 'not-allowed' } : {}),
+                  }}
+                >
+                  {label}
+                </button>
+              );
+            })}
           {currentFilename && (
             <span style={{ color: '#7a8', fontSize: 11, fontFamily: 'monospace', marginLeft: 8 }}>
               [{currentFilename}]
@@ -771,13 +808,27 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
         </div>
       )}
 
-      {/* Back button — top right */}
-      <button
-        onClick={onBack}
-        style={{ ...btnBase, position: 'absolute', top: 16, right: 16 }}
-      >
-        Back to Menu
-      </button>
+      {/* Top right buttons */}
+      <div style={{ position: 'absolute', top: 16, right: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <button onClick={onBack} style={btnBase}>
+          Back to Menu
+        </button>
+        <button
+          onClick={hasPlayer ? handleTryPlay : undefined}
+          title={!hasPlayer ? 'Place a player spawn first' : undefined}
+          style={{
+            ...btnBase,
+            background: 'linear-gradient(135deg, #1a1a3e, #2a1a4e)',
+            border: '1px solid #7a5af5',
+            color: '#c8b8ff',
+            boxShadow: '0 0 12px rgba(122,90,245,0.3), inset 0 1px 0 rgba(255,255,255,0.08)',
+            letterSpacing: '0.5px',
+            ...(!hasPlayer ? { opacity: 0.4, cursor: 'not-allowed' } : {}),
+          }}
+        >
+          Try to Play
+        </button>
+      </div>
 
       {/* ── Load Modal ─────────────────────────────────────────────────── */}
       {showLoadModal && (
