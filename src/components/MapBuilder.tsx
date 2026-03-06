@@ -103,8 +103,6 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
   const [tool, setTool] = useState<Tool>('tile');
   const toolRef = useRef<Tool>('tile');
 
-  const [copied, setCopied] = useState(false);
-
   // File management state
   const [currentFilename, setCurrentFilename] = useState<string | null>(null);
   const [showLoadModal, setShowLoadModal] = useState(false);
@@ -516,16 +514,6 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       touchesRef.current.delete(t.identifier);
     if (touchesRef.current.size < 2) pinchRef.current.active = false;
     if (touchesRef.current.size === 0) dragRef.current.active = false;
-  };
-
-  // ── export ────────────────────────────────────────────────────────────────
-
-  const copyLevelData = () => {
-    const text = exportLevelData(gridRef.current, playerRef.current, colsRef.current, rowsRef.current);
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
   };
 
   // ── tool change ───────────────────────────────────────────────────────────

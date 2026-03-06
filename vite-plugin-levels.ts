@@ -114,25 +114,6 @@ export default function levelsPlugin(): Plugin {
           return;
         }
 
-        // POST /api/levels/save — { filename, content }
-        if (req.method === 'POST' && req.url?.startsWith('/save')) {
-          let body = '';
-          req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
-          req.on('end', () => {
-            try {
-              const { filename, content } = JSON.parse(body);
-              const filepath = path.join(LEVELS_DIR, `${filename}.ts`);
-              fs.writeFileSync(filepath, content);
-              rebuildIndex();
-              res.end(JSON.stringify({ ok: true }));
-            } catch (e) {
-              res.statusCode = 500;
-              res.end(JSON.stringify({ error: String(e) }));
-            }
-          });
-          return;
-        }
-
         // POST /api/levels/save-as — { name, content }
         if (req.method === 'POST' && req.url?.startsWith('/save-as')) {
           let body = '';
@@ -150,6 +131,25 @@ export default function levelsPlugin(): Plugin {
               fs.writeFileSync(filepath, content);
               rebuildIndex();
               res.end(JSON.stringify({ ok: true, filename: slug }));
+            } catch (e) {
+              res.statusCode = 500;
+              res.end(JSON.stringify({ error: String(e) }));
+            }
+          });
+          return;
+        }
+
+        // POST /api/levels/save — { filename, content }
+        if (req.method === 'POST' && req.url?.startsWith('/save')) {
+          let body = '';
+          req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+          req.on('end', () => {
+            try {
+              const { filename, content } = JSON.parse(body);
+              const filepath = path.join(LEVELS_DIR, `${filename}.ts`);
+              fs.writeFileSync(filepath, content);
+              rebuildIndex();
+              res.end(JSON.stringify({ ok: true }));
             } catch (e) {
               res.statusCode = 500;
               res.end(JSON.stringify({ error: String(e) }));

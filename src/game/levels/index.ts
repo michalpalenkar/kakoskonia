@@ -1,6 +1,7 @@
 import type { TileZone } from '../TileMap';
 import * as level1 from './level1';
 import * as level2 from './level2';
+import * as level_miso from './level_miso';
 
 export interface LevelData {
   id: number;
@@ -30,5 +31,14 @@ export const LEVELS: LevelData[] = [
     spawnX: level2.SPAWN_X,
     spawnY: level2.SPAWN_Y,
     zones: level2.LEVEL_ZONES,
+  },
+  {
+    id: 3,
+    name: 'Level miso',
+    cols: level_miso.TILE_COLS,
+    rows: level_miso.TILE_ROWS,
+    spawnX: level_miso.SPAWN_X,
+    spawnY: level_miso.SPAWN_Y,
+    zones: level_miso.LEVEL_ZONES,
   },
 ];
