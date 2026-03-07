@@ -12,6 +12,8 @@ const WATER_MOVE_FACTOR = 0.6;
 const WATER_SINK_SPEED = 2.5;
 const WATER_MAX_FALL = 4;
 const WATER_JUMP_VEL = -10;
+const CROUCH_H = 64;
+const CROUCH_W = 56;
 
 export class Player {
   x: number;
@@ -38,6 +40,8 @@ export class Player {
   private dashDir = -1;
   private knockbackFrames = 0;
   private knockbackVx = 0;
+  private hitboxW = PLAYER_W;
+  private hitboxH = PLAYER_H;
 
   sprites: Partial<Record<string, SpriteSheet>> = {};
 
@@ -47,6 +51,8 @@ export class Player {
   }
 
   update(input: InputState, colliders: Rect[], waterRects: Rect[] = []) {
+    this.updateCrouchState(colliders);
+
     // ── Water detection ─────────────────────────────────────────────────────
     this.inWater = false;
     this.onWaterSurface = false;
@@ -54,8 +60,8 @@ export class Player {
       if (this.overlapsRect(wr)) {
         this.inWater = true;
         // Surface = player's vertical center is above the water rect top + half tile
-        const playerMidY = this.y + PLAYER_H / 2;
-        if (playerMidY <= wr.y + PLAYER_H * 0.4) {
+        const playerMidY = this.y + this.hitboxH / 2;
+        if (playerMidY <= wr.y + this.hitboxH * 0.4) {
           this.onWaterSurface = true;
         }
         break;
@@ -215,7 +221,8 @@ export class Player {
         usedLedgeAssist = true;
         break;
       }
-      if (this.vx > 0) this.x = r.x - PLAYER_W;
+      if (this.tryAutoCrouch(colliders, r)) continue;
+      if (this.vx > 0) this.x = r.x - this.hitboxW;
       else if (this.vx < 0) this.x = r.x + r.w;
       this.vx = 0;
     }
@@ -232,7 +239,7 @@ export class Player {
     for (const r of colliders) {
       if (!this.overlaps(r)) continue;
       if (this.vy >= 0) {
-        this.y = r.y - PLAYER_H;
+        this.y = r.y - this.hitboxH;
         this.grounded = true;
       } else {
         this.y = r.y + r.h;
@@ -244,18 +251,18 @@ export class Player {
   overlapsRect(r: Rect): boolean {
     return (
       this.x < r.x + r.w &&
-      this.x + PLAYER_W > r.x &&
+      this.x + this.hitboxW > r.x &&
       this.y < r.y + r.h &&
-      this.y + PLAYER_H > r.y
+      this.y + this.hitboxH > r.y
     );
   }
 
   private overlaps(r: Rect): boolean {
     return (
       this.x < r.x + r.w &&
-      this.x + PLAYER_W > r.x &&
+      this.x + this.hitboxW > r.x &&
       this.y < r.y + r.h &&
-      this.y + PLAYER_H > r.y
+      this.y + this.hitboxH > r.y
     );
   }
 
@@ -263,13 +270,13 @@ export class Player {
     if (this.vx === 0) return false;
     if (this.vy > 6) return false; // too fast downward -> do not auto-climb
 
-    const playerBottom = this.y + PLAYER_H;
+    const playerBottom = this.y + this.hitboxH;
     const topDelta = playerBottom - hit.y;
 
     // Must be near the top edge of the obstacle.
     if (topDelta < -LEDGE_ASSIST_DOWN_PX || topDelta > LEDGE_ASSIST_UP_PX) return false;
 
-    const targetY = hit.y - PLAYER_H;
+    const targetY = hit.y - this.hitboxH;
     if (!this.canStandAt(this.x, targetY, colliders, hit)) return false;
 
     this.y = targetY;
@@ -281,12 +288,46 @@ export class Player {
       if (r === ignore) continue;
       if (
         x < r.x + r.w &&
-        x + PLAYER_W > r.x &&
+        x + this.hitboxW > r.x &&
         y < r.y + r.h &&
-        y + PLAYER_H > r.y
+        y + this.hitboxH > r.y
       ) return false;
     }
     return true;
+  }
+
+  private updateCrouchState(colliders: Rect[]) {
+    if (this.hitboxW >= PLAYER_W && this.hitboxH >= PLAYER_H) return;
+    const desiredX = this.x + (this.hitboxW - PLAYER_W) / 2;
+    const desiredY = this.y - (PLAYER_H - this.hitboxH);
+    if (!this.collidesAt(desiredX, desiredY, PLAYER_W, PLAYER_H, colliders)) {
+      this.x = desiredX;
+      this.y = desiredY;
+      this.hitboxW = PLAYER_W;
+      this.hitboxH = PLAYER_H;
+    }
+  }
+
+  private tryAutoCrouch(colliders: Rect[], ignore: Rect): boolean {
+    if (this.hitboxW <= CROUCH_W && this.hitboxH <= CROUCH_H) return false;
+    const centerX = this.x + this.hitboxW / 2;
+    const bottomY = this.y + this.hitboxH;
+    const crouchX = centerX - CROUCH_W / 2;
+    const crouchY = bottomY - CROUCH_H;
+    if (this.collidesAt(crouchX, crouchY, CROUCH_W, CROUCH_H, colliders, ignore)) return false;
+    this.x = crouchX;
+    this.y = crouchY;
+    this.hitboxW = CROUCH_W;
+    this.hitboxH = CROUCH_H;
+    return true;
+  }
+
+  private collidesAt(x: number, y: number, w: number, h: number, colliders: Rect[], ignore?: Rect): boolean {
+    for (const r of colliders) {
+      if (r === ignore) continue;
+      if (x < r.x + r.w && x + w > r.x && y < r.y + r.h && y + h > r.y) return true;
+    }
+    return false;
   }
 
   draw(ctx: CanvasRenderingContext2D, camX: number, camY: number) {
@@ -295,7 +336,7 @@ export class Player {
 
     if (!sheet) {
       ctx.fillStyle = '#e74c3c';
-      ctx.fillRect(this.x - camX, this.y - camY, PLAYER_W, PLAYER_H);
+      ctx.fillRect(this.x - camX, this.y - camY, this.hitboxW, this.hitboxH);
       return;
     }
 
@@ -305,23 +346,27 @@ export class Player {
       frame = Math.min(frame, Math.max(0, sheet.frames - 2));
     }
 
-    const sx    = frame * sheet.frameW;
-    const scale = PLAYER_DRAW_H / sheet.frameH;
-    const dw    = sheet.frameW * scale;
-    const dh    = PLAYER_DRAW_H;
+    const sx = frame * sheet.frameW;
+    const jumpSizeMul = spriteKey === 'jump' ? 1.3 : 1;
+    const drawH = PLAYER_DRAW_H * jumpSizeMul;
+    const scale = drawH / sheet.frameH;
+    const dw = sheet.frameW * scale;
+    const dh = drawH;
     const screenX = this.x - camX;
-    const screenY = this.y - camY - (PLAYER_DRAW_H - PLAYER_H);
+    const screenY = this.y - camY - (drawH - this.hitboxH);
 
     // Sprites face LEFT by default — flip when facing right
     ctx.save();
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
     if (!this.facingLeft) {
-      ctx.translate(screenX + PLAYER_W / 2, screenY);
+      ctx.translate(screenX + this.hitboxW / 2, screenY);
       ctx.scale(-1, 1);
       ctx.drawImage(sheet.canvas, sx, 0, sheet.frameW, sheet.frameH,
         -dw / 2, 0, dw, dh);
     } else {
       ctx.drawImage(sheet.canvas, sx, 0, sheet.frameW, sheet.frameH,
-        screenX + PLAYER_W / 2 - dw / 2, screenY, dw, dh);
+        screenX + this.hitboxW / 2 - dw / 2, screenY, dw, dh);
     }
     ctx.restore();
   }
@@ -331,5 +376,13 @@ export class Player {
     this.knockbackFrames = Math.max(1, Math.floor(frames));
     this.vy = verticalSpeed;
     this.grounded = false;
+  }
+
+  getHitboxWidth() {
+    return this.hitboxW;
+  }
+
+  getHitboxHeight() {
+    return this.hitboxH;
   }
 }

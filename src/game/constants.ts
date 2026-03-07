@@ -28,8 +28,8 @@ export const LEDGE_ASSIST_UP_PX = 28;   // how far below top we still snap up
 export const LEDGE_ASSIST_DOWN_PX = 10; // how far above top we can still grab
 
 // Player hitbox
-export const PLAYER_W = 52;
-export const PLAYER_H = 62;       // collision height (fits 1-tile = 64px gaps)
+export const PLAYER_W = 78;
+export const PLAYER_H = 93;       // collision size scaled to match 1.5x player
 export const PLAYER_DRAW_H = 120; // visual height (sprite size), 1.5x larger
 
 // Camera

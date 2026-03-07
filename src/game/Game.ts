@@ -1,7 +1,7 @@
 import { Player } from './entities/Player';
 import { Camera } from './Camera';
 import { TileMap } from './TileMap';
-import { PLAYER_W, PLAYER_H } from './constants';
+import { PLAYER_H } from './constants';
 import { TILE_DSP as TILE_SIZE } from './AutoTile';
 import { loadImage, loadSpriteTransparent } from './spriteUtils';
 import type { InputState, SpriteSheet } from './types';
@@ -70,6 +70,7 @@ interface GameHooks {
 export class Game {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
+  private dpr = 1;
 
   private player: Player;
   private camera: Camera;
@@ -175,9 +176,9 @@ export class Game {
     const worldW = this.tileMap.cols * TILE_SIZE;
     const worldH = this.tileMap.rows * TILE_SIZE;
     this.camera.snap(
-      this.player.x, this.player.y, PLAYER_W, PLAYER_H,
-      this.canvas.width  / ZOOM,
-      this.canvas.height / ZOOM,
+      this.player.x, this.player.y, this.player.getHitboxWidth(), this.player.getHitboxHeight(),
+      this.canvas.width / this.dpr / ZOOM,
+      this.canvas.height / this.dpr / ZOOM,
       worldW,
       worldH,
     );
@@ -211,8 +212,8 @@ export class Game {
     this.lastTime = time;
     this.accumulator += Math.min(rawDt, 0.1);
 
-    const evw = this.canvas.width  / ZOOM;
-    const evh = this.canvas.height / ZOOM;
+    const evw = this.canvas.width / this.dpr / ZOOM;
+    const evh = this.canvas.height / this.dpr / ZOOM;
     const worldW = this.tileMap.cols * TILE_SIZE;
     const worldH = this.tileMap.rows * TILE_SIZE;
 
@@ -224,7 +225,7 @@ export class Game {
         this.player.update(this.input, this._colliders.concat(enemyColliders), this._waterRects);
         this.applyEnemyDamageToPlayer();
         this.camera.update(
-          this.player.x, this.player.y, PLAYER_W, PLAYER_H,
+          this.player.x, this.player.y, this.player.getHitboxWidth(), this.player.getHitboxHeight(),
           evw, evh, this.player.facingLeft, worldW, worldH,
         );
       }
@@ -261,13 +262,16 @@ export class Game {
 
   private render(evw: number, evh: number, worldW: number, worldH: number) {
     const { ctx, canvas } = this;
-    const vw   = canvas.width;
-    const vh   = canvas.height;
+    const vw   = canvas.width / this.dpr;
+    const vh   = canvas.height / this.dpr;
     const shakeX = this.shakeFrames > 0 ? (Math.random() * 2 - 1) * this.shakeMagnitude : 0;
     const shakeY = this.shakeFrames > 0 ? (Math.random() * 2 - 1) * this.shakeMagnitude : 0;
     const camX = this.camera.x + shakeX;
     const camY = this.camera.y + shakeY;
 
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
     ctx.clearRect(0, 0, vw, vh);
     this.drawBg(camX, camY, vw, vh, worldW, worldH);
 
@@ -446,9 +450,18 @@ export class Game {
   private applyEnemyDamageToPlayer() {
     if (this.enemyHitCooldown > 0) return;
     for (const enemy of this.enemies) {
-      if (!this.rectsTouchOrOverlap(this.player.x, this.player.y, PLAYER_W, PLAYER_H, enemy.x, enemy.y, enemy.w, enemy.h)) continue;
+      if (!this.rectsTouchOrOverlap(
+        this.player.x,
+        this.player.y,
+        this.player.getHitboxWidth(),
+        this.player.getHitboxHeight(),
+        enemy.x,
+        enemy.y,
+        enemy.w,
+        enemy.h,
+      )) continue;
       this.player.health = Math.max(0, this.player.health - enemy.damage);
-      const playerCenter = this.player.x + PLAYER_W / 2;
+      const playerCenter = this.player.x + this.player.getHitboxWidth() / 2;
       const enemyCenter = enemy.x + enemy.w / 2;
       const knockDir = playerCenter >= enemyCenter ? 1 : -1;
       // 8 px/frame for 8 frames ~= one tile knockback (64 px).
@@ -526,8 +539,11 @@ export class Game {
 
 
   private resizeCanvas = () => {
-    this.canvas.width  = window.innerWidth;
-    this.canvas.height = window.innerHeight;
+    this.dpr = Math.max(1, window.devicePixelRatio || 1);
+    this.canvas.width  = Math.floor(window.innerWidth * this.dpr);
+    this.canvas.height = Math.floor(window.innerHeight * this.dpr);
+    this.canvas.style.width = `${window.innerWidth}px`;
+    this.canvas.style.height = `${window.innerHeight}px`;
   };
 
   private onKeyDown = (e: KeyboardEvent) => {
