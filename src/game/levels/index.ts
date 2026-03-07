@@ -1,7 +1,8 @@
 import type { TileZone } from '../TileMap';
-import * as level1 from './level1';
-import * as level2 from './level2';
+import * as hlavacikova from './hlavacikova';
+import * as kedy_pucdej from './kedy_pucdej';
 import * as tami_level_backup from './tami_level_backup';
+import * as vyhlad_na_rakusko from './vyhlad_na_rakusko';
 
 export interface LevelData {
   id: number;
@@ -16,21 +17,21 @@ export interface LevelData {
 export const LEVELS: LevelData[] = [
   {
     id: 1,
-    name: 'Level 1',
-    cols: level1.TILE_COLS,
-    rows: level1.TILE_ROWS,
-    spawnX: level1.SPAWN_X,
-    spawnY: level1.SPAWN_Y,
-    zones: level1.LEVEL_ZONES,
+    name: 'Hlavacikova',
+    cols: hlavacikova.TILE_COLS,
+    rows: hlavacikova.TILE_ROWS,
+    spawnX: hlavacikova.SPAWN_X,
+    spawnY: hlavacikova.SPAWN_Y,
+    zones: hlavacikova.LEVEL_ZONES,
   },
   {
     id: 2,
-    name: 'Level 2',
-    cols: level2.TILE_COLS,
-    rows: level2.TILE_ROWS,
-    spawnX: level2.SPAWN_X,
-    spawnY: level2.SPAWN_Y,
-    zones: level2.LEVEL_ZONES,
+    name: 'Kedy pucdej',
+    cols: kedy_pucdej.TILE_COLS,
+    rows: kedy_pucdej.TILE_ROWS,
+    spawnX: kedy_pucdej.SPAWN_X,
+    spawnY: kedy_pucdej.SPAWN_Y,
+    zones: kedy_pucdej.LEVEL_ZONES,
   },
   {
     id: 3,
@@ -40,5 +41,14 @@ export const LEVELS: LevelData[] = [
     spawnX: tami_level_backup.SPAWN_X,
     spawnY: tami_level_backup.SPAWN_Y,
     zones: tami_level_backup.LEVEL_ZONES,
+  },
+  {
+    id: 4,
+    name: 'Vyhlad na rakusko',
+    cols: vyhlad_na_rakusko.TILE_COLS,
+    rows: vyhlad_na_rakusko.TILE_ROWS,
+    spawnX: vyhlad_na_rakusko.SPAWN_X,
+    spawnY: vyhlad_na_rakusko.SPAWN_Y,
+    zones: vyhlad_na_rakusko.LEVEL_ZONES,
   },
 ];

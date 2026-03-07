@@ -23,9 +23,14 @@ export const DASH_SPEED = 15;
 export const DASH_FRAMES = 10;
 export const DASH_COOLDOWN_FRAMES = 24;
 
+// Ledge assist (forgiving corner climb)
+export const LEDGE_ASSIST_UP_PX = 28;   // how far below top we still snap up
+export const LEDGE_ASSIST_DOWN_PX = 10; // how far above top we can still grab
+
 // Player hitbox
 export const PLAYER_W = 52;
-export const PLAYER_H = 80;
+export const PLAYER_H = 62;       // collision height (fits 1-tile = 64px gaps)
+export const PLAYER_DRAW_H = 80;  // visual height (sprite size)
 
 // Camera
 export const CAM_LERP = 0.1;

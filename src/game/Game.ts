@@ -8,6 +8,7 @@ import type { InputState, SpriteSheet } from './types';
 import type { LevelData } from './levels';
 
 const bgUrl      = new URL('../assets/bg.png',                 import.meta.url).href;
+const kedyBgUrl  = new URL('../assets/bg-kedy-pucdej.png',     import.meta.url).href;
 const tilemapUrl = new URL('../assets/kakoskonia_tilemap.png', import.meta.url).href;
 const idleUrl    = new URL('../assets/steady-sprite.png',      import.meta.url).href;
 const runUrl     = new URL('../assets/run-sprite.png',         import.meta.url).href;
@@ -35,6 +36,15 @@ interface NatureOverlay {
   img: HTMLImageElement;
 }
 
+interface SkyCloud {
+  x01: number;
+  y01: number;
+  w01: number;
+  h01: number;
+  speed: number;
+  alpha: number;
+}
+
 export class Game {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
@@ -44,9 +54,11 @@ export class Game {
   private tileMap!: TileMap;
 
   private bgImg!: HTMLImageElement;
+  private kedyBgImg!: HTMLImageElement;
   private tilemapImg!: HTMLImageElement;
   private natureImgs: HTMLImageElement[] = [];
   private overlays: NatureOverlay[] = [];
+  private skyClouds: SkyCloud[] = [];
 
   private keys: Record<string, boolean> = {};
   private prevJump = false;
@@ -74,11 +86,13 @@ export class Game {
     this.level = level;
     this.player = new Player(level.spawnX, level.spawnY - PLAYER_H);
     this.camera = new Camera();
+    this.skyClouds = this.buildSkyClouds();
   }
 
   async init() {
-    const [bgImg, tilemapImg, idleCanvas, runCanvas, jumpCanvas, ...natureImgs] = await Promise.all([
+    const [bgImg, kedyBgImg, tilemapImg, idleCanvas, runCanvas, jumpCanvas, ...natureImgs] = await Promise.all([
       loadImage(bgUrl),
+      loadImage(kedyBgUrl),
       loadImage(tilemapUrl),
       loadSpriteTransparent(idleUrl),
       loadSpriteTransparent(runUrl),
@@ -87,6 +101,7 @@ export class Game {
     ]);
 
     this.bgImg      = bgImg;
+    this.kedyBgImg  = kedyBgImg;
     this.tilemapImg = tilemapImg;
     this.natureImgs = natureImgs;
 
@@ -222,7 +237,9 @@ export class Game {
   }
 
   private drawBg(camX: number, camY: number, vw: number, vh: number, worldW: number, worldH: number) {
-    const { ctx, bgImg } = this;
+    const { ctx } = this;
+    const isKedyPucdej = this.isKedyPucdejLevel();
+    const bgImg = isKedyPucdej ? this.kedyBgImg : this.bgImg;
     const scale  = Math.max(vw / bgImg.naturalWidth, vh / bgImg.naturalHeight);
     const drawW  = bgImg.naturalWidth  * scale;
     const drawH  = bgImg.naturalHeight * scale;
@@ -238,11 +255,40 @@ export class Game {
     const offsetY    = -(ty * maxOffsetY * 0.15);
 
     ctx.drawImage(bgImg, offsetX, offsetY, drawW, drawH);
+    if (isKedyPucdej) this.drawMovingClouds(vw, vh);
+
+    const bgTone = isKedyPucdej
+      ? 'rgba(24, 56, 38, 0.22)'
+      : 'rgba(0, 0, 0, 0)';
+    if (bgTone !== 'rgba(0, 0, 0, 0)') {
+      ctx.fillStyle = bgTone;
+      ctx.fillRect(0, 0, vw, vh);
+    }
 
     // Fill any uncovered gap at the bottom with ground colour
     if (drawH + offsetY < vh) {
-      ctx.fillStyle = '#4a5a38';
+      ctx.fillStyle = isKedyPucdej ? '#2e4a2e' : '#4a5a38';
       ctx.fillRect(0, drawH + offsetY, vw, vh - (drawH + offsetY));
+    }
+  }
+
+  private drawMovingClouds(vw: number, vh: number) {
+    const { ctx } = this;
+    const t = performance.now() / 1000;
+    const skyH = vh * 0.6;
+
+    for (const c of this.skyClouds) {
+      const w = vw * c.w01;
+      const h = vh * c.h01;
+      const baseX = c.x01 * vw;
+      const x = (baseX + t * c.speed * vw) % (vw + w) - w * 0.5;
+      const y = c.y01 * skyH;
+
+      const g = ctx.createRadialGradient(x, y, w * 0.2, x, y, w);
+      g.addColorStop(0, `rgba(200, 226, 245, ${c.alpha})`);
+      g.addColorStop(1, 'rgba(200, 226, 245, 0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(x - w, y - h, w * 2, h * 2);
     }
   }
 
@@ -321,6 +367,27 @@ export class Game {
       if (o.x + o.w < camX || o.x > camX + viewW || o.y + o.h < camY || o.y > camY + viewH) continue;
       ctx.drawImage(o.img, o.x - camX, o.y - camY, o.w, o.h);
     }
+  }
+
+  private buildSkyClouds(): SkyCloud[] {
+    const rand = seededRand((this.level.id * 123457) ^ 0x53a9c5d7);
+    const out: SkyCloud[] = [];
+    for (let i = 0; i < 10; i++) {
+      out.push({
+        x01: rand(),
+        y01: 0.06 + rand() * 0.5,
+        w01: 0.14 + rand() * 0.23,
+        h01: 0.05 + rand() * 0.1,
+        speed: 0.006 + rand() * 0.02,
+        alpha: 0.09 + rand() * 0.09,
+      });
+    }
+    return out;
+  }
+
+  private isKedyPucdejLevel(): boolean {
+    if (this.level.bgPreset === 'kedy_pucdej') return true;
+    return this.level.name.toLowerCase().includes('kedy');
   }
 }
 

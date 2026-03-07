@@ -3,7 +3,8 @@ import {
   GRAVITY_UP, GRAVITY_DOWN, MAX_FALL,
   COYOTE_FRAMES, JUMP_BUFFER_FRAMES,
   DASH_SPEED, DASH_FRAMES, DASH_COOLDOWN_FRAMES,
-  PLAYER_W, PLAYER_H,
+  LEDGE_ASSIST_UP_PX, LEDGE_ASSIST_DOWN_PX,
+  PLAYER_W, PLAYER_H, PLAYER_DRAW_H,
 } from '../constants';
 import type { Rect, InputState, SpriteSheet, AnimState } from '../types';
 
@@ -151,13 +152,25 @@ export class Player {
   }
 
   private resolveCollisions(colliders: Rect[]) {
+    let usedLedgeAssist = false;
+
     // ── X ──────────────────────────────────────────────────────────────────
     this.x += this.vx;
     for (const r of colliders) {
       if (!this.overlaps(r)) continue;
+      if (this.tryLedgeAssist(r, colliders)) {
+        usedLedgeAssist = true;
+        break;
+      }
       if (this.vx > 0) this.x = r.x - PLAYER_W;
       else if (this.vx < 0) this.x = r.x + r.w;
       this.vx = 0;
+    }
+
+    if (usedLedgeAssist) {
+      this.grounded = true;
+      this.vy = 0;
+      return;
     }
 
     // ── Y ──────────────────────────────────────────────────────────────────
@@ -184,6 +197,36 @@ export class Player {
     );
   }
 
+  private tryLedgeAssist(hit: Rect, colliders: Rect[]): boolean {
+    if (this.vx === 0) return false;
+    if (this.vy > 6) return false; // too fast downward -> do not auto-climb
+
+    const playerBottom = this.y + PLAYER_H;
+    const topDelta = playerBottom - hit.y;
+
+    // Must be near the top edge of the obstacle.
+    if (topDelta < -LEDGE_ASSIST_DOWN_PX || topDelta > LEDGE_ASSIST_UP_PX) return false;
+
+    const targetY = hit.y - PLAYER_H;
+    if (!this.canStandAt(this.x, targetY, colliders, hit)) return false;
+
+    this.y = targetY;
+    return true;
+  }
+
+  private canStandAt(x: number, y: number, colliders: Rect[], ignore: Rect): boolean {
+    for (const r of colliders) {
+      if (r === ignore) continue;
+      if (
+        x < r.x + r.w &&
+        x + PLAYER_W > r.x &&
+        y < r.y + r.h &&
+        y + PLAYER_H > r.y
+      ) return false;
+    }
+    return true;
+  }
+
   draw(ctx: CanvasRenderingContext2D, camX: number, camY: number) {
     const spriteKey = this.animState === 'fall' ? 'jump' : this.animState;
     const sheet = this.sprites[spriteKey];
@@ -201,11 +244,11 @@ export class Player {
     }
 
     const sx    = frame * sheet.frameW;
-    const scale = PLAYER_H / sheet.frameH;
+    const scale = PLAYER_DRAW_H / sheet.frameH;
     const dw    = sheet.frameW * scale;
-    const dh    = PLAYER_H;
+    const dh    = PLAYER_DRAW_H;
     const screenX = this.x - camX;
-    const screenY = this.y - camY;
+    const screenY = this.y - camY - (PLAYER_DRAW_H - PLAYER_H);
 
     // Sprites face LEFT by default — flip when facing right
     ctx.save();
