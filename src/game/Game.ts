@@ -158,11 +158,11 @@ export class Game {
     this.enemies = this.buildLevelEnemies();
 
     // Sprite sheets
-    // steady-sprite.png  4305 × 2114  3 frames  fps 8
+    // steady-sprite.png  900 × 450  2 frames  fps 8
     // run-sprite.png     3031 × 2114  2 frames  fps 12
     // jump-sprite.png    8134 × 1330  7 frames  fps 10
     this.player.sprites = {
-      idle: makeSheet(idleCanvas, 3,  8),
+      idle: makeSheet(idleCanvas, 2,  8),
       run:  makeSheet(runCanvas,  2, 12),
       jump: makeSheet(jumpCanvas, 7, 10),
     };
