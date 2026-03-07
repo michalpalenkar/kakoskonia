@@ -1,8 +1,7 @@
 import type { Plugin } from 'vite';
 import { readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync } from 'node:fs';
 import { resolve, join } from 'node:path';
-import { IncomingMessage, ServerResponse } from 'node:http';
-import type { Server } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 
 const LEVELS_DIR = resolve(__dirname, 'src/game/levels');
 const INDEX_FILE = join(LEVELS_DIR, 'index.ts');
@@ -20,6 +19,46 @@ function getLevelFiles(): string[] {
     .map(f => f.replace('.ts', ''));
 }
 
+function extractArrayBlock(content: string, exportName: string): string | null {
+  const start = content.indexOf(`export const ${exportName}`);
+  if (start < 0) return null;
+  const open = content.indexOf('[', start);
+  if (open < 0) return null;
+  const close = content.indexOf('];', open);
+  if (close < 0) return null;
+  return content.slice(open, close);
+}
+
+function parseZoneBlock(content: string, exportName: string): { col: number; row: number; w: number; h: number }[] {
+  const block = extractArrayBlock(content, exportName);
+  if (!block) return [];
+  const zones: { col: number; row: number; w: number; h: number }[] = [];
+  const zoneRegex = /z\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/g;
+  let m: RegExpExecArray | null = null;
+  while ((m = zoneRegex.exec(block)) !== null) {
+    zones.push({ col: +m[1], row: +m[2], w: +m[3], h: +m[4] });
+  }
+  return zones;
+}
+
+function parseEnemiesBlock(content: string): { type: string; col: number; row: number; damage: number; moving: boolean }[] {
+  const block = extractArrayBlock(content, 'ENEMIES');
+  if (!block) return [];
+  const enemies: { type: string; col: number; row: number; damage: number; moving: boolean }[] = [];
+  const enemyRegex = /e\(\s*'([^']+)'\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(true|false)\s*\)/g;
+  let m: RegExpExecArray | null = null;
+  while ((m = enemyRegex.exec(block)) !== null) {
+    enemies.push({
+      type: m[1],
+      col: +m[2],
+      row: +m[3],
+      damage: +m[4],
+      moving: m[5] === 'true',
+    });
+  }
+  return enemies;
+}
+
 function parseLevelFile(filename: string): {
   name: string;
   cols: number;
@@ -27,6 +66,9 @@ function parseLevelFile(filename: string): {
   spawnCol: number;
   spawnRow: number;
   zones: { col: number; row: number; w: number; h: number }[];
+  waterZones?: { col: number; row: number; w: number; h: number }[];
+  bgPreset?: string;
+  enemies?: { type: string; col: number; row: number; damage: number; moving: boolean }[];
 } | null {
   const filepath = join(LEVELS_DIR, `${filename}.ts`);
   if (!existsSync(filepath)) return null;
@@ -39,12 +81,10 @@ function parseLevelFile(filename: string): {
 
   if (!colsMatch || !rowsMatch) return null;
 
-  const zones: { col: number; row: number; w: number; h: number }[] = [];
-  const zoneRegex = /z\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/g;
-  let m;
-  while ((m = zoneRegex.exec(content)) !== null) {
-    zones.push({ col: +m[1], row: +m[2], w: +m[3], h: +m[4] });
-  }
+  const zones = parseZoneBlock(content, 'LEVEL_ZONES');
+  const waterZones = parseZoneBlock(content, 'WATER_ZONES');
+  const enemies = parseEnemiesBlock(content);
+  const bgPresetMatch = content.match(/BG_PRESET\s*=\s*'([^']+)'/);
 
   return {
     name: filename,
@@ -53,6 +93,9 @@ function parseLevelFile(filename: string): {
     spawnCol: spawnXMatch ? +spawnXMatch[1] : 1,
     spawnRow: spawnYMatch ? +spawnYMatch[1] : 5,
     zones,
+    ...(waterZones.length ? { waterZones } : {}),
+    ...(bgPresetMatch ? { bgPreset: bgPresetMatch[1] } : {}),
+    ...(enemies.length ? { enemies } : {}),
   };
 }
 
@@ -62,11 +105,12 @@ function rebuildIndex() {
   const entries = files
     .map((f, i) => {
       const displayName = f.replace(/([a-z])(\d)/g, '$1 $2').replace(/^./, s => s.toUpperCase()).replace(/_/g, ' ');
-      return `  {\n    id: ${i + 1},\n    name: '${displayName}',\n    cols: ${f}.TILE_COLS,\n    rows: ${f}.TILE_ROWS,\n    spawnX: ${f}.SPAWN_X,\n    spawnY: ${f}.SPAWN_Y,\n    zones: ${f}.LEVEL_ZONES,\n  },`;
+      return `  {\n    id: ${i + 1},\n    name: '${displayName}',\n    cols: ${f}.TILE_COLS,\n    rows: ${f}.TILE_ROWS,\n    spawnX: ${f}.SPAWN_X,\n    spawnY: ${f}.SPAWN_Y,\n    zones: ${f}.LEVEL_ZONES,\n    waterZones: (${f} as any).WATER_ZONES ?? [],\n    bgPreset: (${f} as any).BG_PRESET ?? undefined,\n    enemies: (${f} as any).ENEMIES ?? [],\n  },`;
     })
     .join('\n');
 
   const content = `import type { TileZone } from '../TileMap';
+import type { EnemyPlacement } from './levelTools';
 ${imports}
 
 export interface LevelData {
@@ -77,6 +121,9 @@ export interface LevelData {
   spawnX: number;
   spawnY: number;
   zones: TileZone[];
+  waterZones?: TileZone[];
+  bgPreset?: string;
+  enemies?: EnemyPlacement[];
 }
 
 export const LEVELS: LevelData[] = [
@@ -90,7 +137,7 @@ export default function levelsPlugin(): Plugin {
   return {
     name: 'vite-plugin-levels',
     configureServer(server) {
-      server.middlewares.use('/api/levels', (req: any, res: any) => {
+      server.middlewares.use('/api/levels', (req: IncomingMessage, res: ServerResponse) => {
         res.setHeader('Content-Type', 'application/json');
 
         // GET /api/levels — list all levels

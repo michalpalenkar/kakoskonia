@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Game } from '../game/Game';
 import type { LevelData } from '../game/levels';
 
@@ -7,15 +7,27 @@ interface Props {
   onBack?: () => void;
 }
 
+const KEYBOARD_HINTS = [
+  { key: '← / A', action: 'Move left' },
+  { key: '→ / D', action: 'Move right' },
+  { key: '↑ / W / Space / Z / X', action: 'Jump' },
+  { key: 'C', action: 'Dash' },
+  { key: 'ESC', action: 'Back to menu' },
+];
+
 export function GameCanvas({ level, onBack }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef   = useRef<Game | null>(null);
+  const [hintsOpen, setHintsOpen] = useState(false);
+  const [session, setSession] = useState(0);
+  const [gameOverMessage, setGameOverMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const game = new Game(canvas, level);
+    setGameOverMessage(null);
+    const game = new Game(canvas, level, { onGameOver: setGameOverMessage });
     gameRef.current = game;
     let started = false;
 
@@ -28,7 +40,17 @@ export function GameCanvas({ level, onBack }: Props) {
       if (started) game.stop();
       gameRef.current = null;
     };
-  }, [level]);
+  }, [level, session]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && onBack) {
+        onBack();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onBack]);
 
   function makeTouch(key: 'left' | 'right' | 'jump') {
     return {
@@ -74,26 +96,98 @@ export function GameCanvas({ level, onBack }: Props) {
       />
 
       {onBack && (
-        <button
-          onClick={onBack}
-          style={{
-            position: 'absolute',
-            top: 16,
-            left: 16,
-            padding: '8px 16px',
-            background: 'rgba(20,20,36,0.88)',
-            color: '#aac',
-            border: '1px solid #556',
-            borderRadius: 6,
-            cursor: 'pointer',
-            fontSize: 12,
+        <div style={{ position: 'absolute', top: 16, right: 16, zIndex: 10 }}>
+          <button
+            onClick={() => setHintsOpen(o => !o)}
+            title="Keyboard hints"
+            style={{
+              width: 28,
+              height: 28,
+              borderRadius: '50%',
+              background: 'rgba(20,20,36,0.6)',
+              color: 'rgba(180,170,210,0.7)',
+              border: '1px solid rgba(100,90,130,0.5)',
+              cursor: 'pointer',
+              fontSize: 13,
+              fontFamily: 'monospace',
+              backdropFilter: 'blur(4px)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              lineHeight: 1,
+            }}
+          >
+            ?
+          </button>
+          {hintsOpen && (
+            <div style={{
+              position: 'absolute',
+              top: 36,
+              right: 0,
+              background: 'rgba(14,12,26,0.92)',
+              border: '1px solid rgba(100,90,130,0.4)',
+              borderRadius: 6,
+              backdropFilter: 'blur(6px)',
+              padding: '10px 14px',
+              display: 'grid',
+              gridTemplateColumns: 'auto auto',
+              columnGap: 16,
+              rowGap: 6,
+              fontSize: 11,
+              fontFamily: 'monospace',
+              color: '#aaa',
+              whiteSpace: 'nowrap',
+            }}>
+              {KEYBOARD_HINTS.map(({ key, action }) => (
+                <React.Fragment key={key}>
+                  <span style={{ color: '#c8b8e8' }}>{key}</span>
+                  <span>{action}</span>
+                </React.Fragment>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {gameOverMessage && (
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          zIndex: 18,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'rgba(5, 5, 12, 0.62)',
+          backdropFilter: 'blur(2px)',
+        }}>
+          <div style={{
+            width: 'min(92vw, 460px)',
+            background: 'rgba(20,20,36,0.97)',
+            border: '1px solid #6a3c52',
+            borderRadius: 12,
+            padding: '22px 24px',
             fontFamily: 'monospace',
-            backdropFilter: 'blur(4px)',
-            zIndex: 10,
-          }}
-        >
-          Menu
-        </button>
+            boxShadow: '0 10px 40px rgba(0,0,0,0.45)',
+          }}>
+            <div style={{ color: '#f49ab9', fontSize: 26, marginBottom: 10 }}>Game Over</div>
+            <div style={{ color: '#ddd', fontSize: 14, lineHeight: 1.5, marginBottom: 16 }}>{gameOverMessage}</div>
+            <button
+              onClick={() => setSession(prev => prev + 1)}
+              style={{
+                border: '1px solid #c85a7b',
+                background: '#7b2b47',
+                color: '#fff',
+                borderRadius: 8,
+                padding: '10px 18px',
+                fontSize: 14,
+                fontFamily: 'monospace',
+                cursor: 'pointer',
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        </div>
       )}
 
       <div className="touch-controls">

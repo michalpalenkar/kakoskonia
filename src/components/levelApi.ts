@@ -6,6 +6,9 @@ export interface LevelInfo {
   spawnCol: number;
   spawnRow: number;
   zones: { col: number; row: number; w: number; h: number }[];
+  waterZones?: { col: number; row: number; w: number; h: number }[];
+  bgPreset?: string;
+  enemies?: { type: string; col: number; row: number; damage: number; moving: boolean }[];
 }
 
 export async function listLevels(): Promise<LevelInfo[]> {

@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { getAutoTileSrc, drawAutoTile, TILE_DSP as T } from '../game/AutoTile';
 import {
+  ENEMY_DEFINITIONS,
+  ENEMY_BY_ID,
+  type EnemyTypeId,
+  type EnemyDefinition,
+} from '../game/enemyDefinitions';
+import {
   listLevels, loadLevel, saveLevel, saveAsLevel, deleteLevel,
   generateRandomLevel, type LevelInfo,
 } from './levelApi';
@@ -14,7 +20,13 @@ const PINCH_DEADZONE = 0.02;
 
 const tilemapUrl = new URL('../assets/kakoskonia_tilemap.png', import.meta.url).href;
 
-type Tool = 'tile' | 'player';
+type Tool = 'tile' | 'player' | 'water' | 'enemy';
+type EnemyPlacement = { type: EnemyTypeId; col: number; row: number; damage: number; moving: boolean };
+type EnemyOverrideState = {
+  index: number;
+  damage: string;
+  moving: boolean;
+};
 
 const key = (col: number, row: number) => `${col},${row}`;
 const isEdge = (col: number, row: number, cols: number, rows: number) =>
@@ -64,11 +76,15 @@ function extractZones(
 
 function exportLevelData(
   grid: Set<string>,
+  waterGrid: Set<string>,
   playerPos: { col: number; row: number } | null,
+  enemies: EnemyPlacement[],
   cols: number,
   rows: number,
+  bgPreset: string,
 ): string {
   const zones = extractZones(grid, cols, rows);
+  const wZones = extractZones(waterGrid, cols, rows);
 
   const pad = (n: number, len: number) => String(n).padStart(len);
   const zonesStr = zones
@@ -79,10 +95,10 @@ function exportLevelData(
   // row is the tile the player marker occupies; feet are at bottom of that tile
   const spawnRow = playerPos != null ? playerPos.row + 1 : Math.max(1, rows - 4);
 
-  return [
+  const lines = [
     `import { TILE_DSP } from '../AutoTile';`,
-    `import { z } from './levelTools';`,
-    `import type { TileZone } from './levelTools';`,
+    `import { z, e } from './levelTools';`,
+    `import type { TileZone, EnemyPlacement } from './levelTools';`,
     ``,
     `export const TILE_COLS = ${cols};`,
     `export const TILE_ROWS = ${rows};`,
@@ -90,10 +106,37 @@ function exportLevelData(
     `export const SPAWN_X = ${spawnCol} * TILE_DSP;`,
     `export const SPAWN_Y = ${spawnRow} * TILE_DSP - 1;`,
     ``,
+    ...(bgPreset ? [`export const BG_PRESET = '${bgPreset}';`, ``] : []),
     `export const LEVEL_ZONES: TileZone[] = [`,
     zonesStr,
     `];`,
-  ].join('\n');
+  ];
+
+  if (wZones.length > 0) {
+    const waterStr = wZones
+      .map(z => `  z(${pad(z.col, 3)}, ${pad(z.row, 2)}, ${pad(z.w, 3)}, ${pad(z.h, 2)}),`)
+      .join('\n');
+    lines.push(
+      ``,
+      `export const WATER_ZONES: TileZone[] = [`,
+      waterStr,
+      `];`,
+    );
+  }
+
+  if (enemies.length > 0) {
+    const enemyStr = enemies
+      .map(enemy => `  e('${enemy.type}', ${pad(enemy.col, 3)}, ${pad(enemy.row, 2)}, ${enemy.damage}, ${enemy.moving}),`)
+      .join('\n');
+    lines.push(
+      ``,
+      `export const ENEMIES: EnemyPlacement[] = [`,
+      enemyStr,
+      `];`,
+    );
+  }
+
+  return lines.join('\n');
 }
 
 export function MapBuilder({ onBack }: { onBack: () => void }) {
@@ -106,18 +149,37 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
   const rowsRef = useRef(DEFAULT_ROWS);
 
   const gridRef = useRef<Set<string>>(buildInitialGrid(DEFAULT_COLS, DEFAULT_ROWS));
+  const waterRef = useRef<Set<string>>(new Set());
   const playerRef = useRef<{ col: number; row: number } | null>(null);
+  const enemiesRef = useRef<EnemyPlacement[]>([]);
+  const enemyImagesRef = useRef<Record<EnemyTypeId, HTMLImageElement>>({} as Record<EnemyTypeId, HTMLImageElement>);
   const camRef = useRef({ panX: -T, panY: -T, zoom: 1 });
 
   const [tool, setTool] = useState<Tool>('tile');
   const toolRef = useRef<Tool>('tile');
+  const [selectedEnemyType, setSelectedEnemyType] = useState<EnemyTypeId>(ENEMY_DEFINITIONS[0].id);
+  const selectedEnemyRef = useRef<EnemyTypeId>(ENEMY_DEFINITIONS[0].id);
   const [hasPlayer, setHasPlayer] = useState(false);
+  const [bgPreset, setBgPreset] = useState<string>('');
+  const [hoveredEnemyInfo, setHoveredEnemyInfo] = useState<{
+    screenX: number;
+    screenY: number;
+    enemy: EnemyPlacement;
+  } | null>(null);
+  const hoverGridRef = useRef<{ col: number; row: number; inside: boolean }>({ col: -1, row: -1, inside: false });
+
+  const BG_OPTIONS: { value: string; label: string }[] = [
+    { value: '', label: 'None (solid color)' },
+    { value: 'bg', label: 'Default' },
+    { value: 'bg-kedy-pucdej', label: 'Kedy Pucdej' },
+  ];
 
   // File management state
   const [currentFilename, setCurrentFilename] = useState<string | null>(null);
   const [showLoadModal, setShowLoadModal] = useState(false);
   const [showSaveAsModal, setShowSaveAsModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [enemyOverride, setEnemyOverride] = useState<EnemyOverrideState | null>(null);
   const [levelsList, setLevelsList] = useState<LevelInfo[]>([]);
   const [loadSelected, setLoadSelected] = useState(0);
   const [saveAsName, setSaveAsName] = useState('');
@@ -166,6 +228,43 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
   });
 
   const isSolid = (col: number, row: number) => gridRef.current.has(key(col, row));
+  const isWaterCell = (col: number, row: number) => waterRef.current.has(key(col, row));
+  const getEnemyAt = useCallback((col: number, row: number): number => {
+    for (let i = enemiesRef.current.length - 1; i >= 0; i--) {
+      const enemy = enemiesRef.current[i];
+      const def = ENEMY_BY_ID[enemy.type];
+      if (col >= enemy.col && col < enemy.col + def.tilesW && row >= enemy.row && row < enemy.row + def.tilesH) {
+        return i;
+      }
+    }
+    return -1;
+  }, []);
+  const canPlaceEnemy = useCallback((def: EnemyDefinition, col: number, row: number, ignoreIndex = -1): boolean => {
+    const mapCols = colsRef.current;
+    const mapRows = rowsRef.current;
+    if (col < 0 || row < 0 || col + def.tilesW > mapCols || row + def.tilesH > mapRows) return false;
+
+    for (let r = row; r < row + def.tilesH; r++) {
+      for (let c = col; c < col + def.tilesW; c++) {
+        if (gridRef.current.has(key(c, r)) || waterRef.current.has(key(c, r))) return false;
+        const player = playerRef.current;
+        if (player && player.col === c && player.row === r) return false;
+      }
+    }
+
+    for (let i = 0; i < enemiesRef.current.length; i++) {
+      if (i === ignoreIndex) continue;
+      const e = enemiesRef.current[i];
+      const existingDef = ENEMY_BY_ID[e.type];
+      const overlap =
+        col < e.col + existingDef.tilesW &&
+        col + def.tilesW > e.col &&
+        row < e.row + existingDef.tilesH &&
+        row + def.tilesH > e.row;
+      if (overlap) return false;
+    }
+    return true;
+  }, []);
 
   const canvasRect = () => canvasRef.current!.getBoundingClientRect();
 
@@ -194,6 +293,14 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     }
     gridRef.current = nextGrid;
 
+    // Clip water grid to new bounds
+    const nextWater = new Set<string>();
+    for (const k of waterRef.current) {
+      const [c, r] = k.split(',').map(Number);
+      if (c >= 0 && c < safeCols && r >= 0 && r < safeRows) nextWater.add(k);
+    }
+    waterRef.current = nextWater;
+
     const player = playerRef.current;
     if (player) {
       playerRef.current = {
@@ -202,6 +309,30 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       };
       setHasPlayer(true);
     }
+
+    const nextEnemies: EnemyPlacement[] = [];
+    for (const enemy of enemiesRef.current) {
+      const def = ENEMY_BY_ID[enemy.type];
+      if (enemy.col < 0 || enemy.row < 0) continue;
+      if (enemy.col + def.tilesW > safeCols || enemy.row + def.tilesH > safeRows) continue;
+      let blocked = false;
+      for (let r = enemy.row; r < enemy.row + def.tilesH && !blocked; r++) {
+        for (let c = enemy.col; c < enemy.col + def.tilesW; c++) {
+          if (nextGrid.has(key(c, r)) || nextWater.has(key(c, r))) { blocked = true; break; }
+          if (playerRef.current && playerRef.current.col === c && playerRef.current.row === r) { blocked = true; break; }
+        }
+      }
+      if (blocked) continue;
+      const overlapsPlaced = nextEnemies.some(other => {
+        const od = ENEMY_BY_ID[other.type];
+        return enemy.col < other.col + od.tilesW &&
+          enemy.col + def.tilesW > other.col &&
+          enemy.row < other.row + od.tilesH &&
+          enemy.row + def.tilesH > other.row;
+      });
+      if (!overlapsPlaced) nextEnemies.push(enemy);
+    }
+    enemiesRef.current = nextEnemies;
 
     colsRef.current = safeCols;
     rowsRef.current = safeRows;
@@ -263,6 +394,76 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       }
     }
 
+    // water tiles
+    for (let r = r0; r < r1; r++) {
+      for (let c = c0; c < c1; c++) {
+        if (!isWaterCell(c, r)) continue;
+        const wx = c * T - panX;
+        const wy = r * T - panY;
+        const surface = !isWaterCell(c, r - 1);
+        if (surface) {
+          ctx.fillStyle = 'rgba(30, 100, 200, 0.35)';
+          ctx.fillRect(wx, wy, T, T * 0.3);
+          ctx.fillStyle = 'rgba(20, 80, 180, 0.45)';
+          ctx.fillRect(wx, wy + T * 0.3, T, T * 0.7);
+        } else {
+          ctx.fillStyle = 'rgba(20, 80, 180, 0.45)';
+          ctx.fillRect(wx, wy, T, T);
+        }
+      }
+    }
+
+    // enemies
+    for (let i = 0; i < enemiesRef.current.length; i++) {
+      const enemy = enemiesRef.current[i];
+      const def = ENEMY_BY_ID[enemy.type];
+      const ex = enemy.col * T - panX;
+      const ey = enemy.row * T - panY;
+      const ew = def.tilesW * T;
+      const eh = def.tilesH * T;
+
+      if (ex + ew < -T || ey + eh < -T || ex > viewW + T || ey > viewH + T) continue;
+      const img = enemyImagesRef.current[enemy.type];
+      if (img) {
+        ctx.drawImage(img, ex, ey, ew, eh);
+      } else {
+        ctx.fillStyle = 'rgba(180, 80, 90, 0.8)';
+        ctx.fillRect(ex, ey, ew, eh);
+      }
+      ctx.strokeStyle = 'rgba(220, 120, 120, 0.95)';
+      ctx.lineWidth = 2 / zoom;
+      ctx.strokeRect(ex, ey, ew, eh);
+      if (enemy.moving) {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+        ctx.font = `bold ${10 / zoom}px monospace`;
+        ctx.fillText('M', ex + 6 / zoom, ey + 12 / zoom);
+      }
+    }
+
+    // enemy placement preview
+    if (toolRef.current === 'enemy' && hoverGridRef.current.inside) {
+      const previewDef = ENEMY_BY_ID[selectedEnemyRef.current];
+      const { col, row } = hoverGridRef.current;
+      const valid = canPlaceEnemy(previewDef, col, row);
+      const px = col * T - panX;
+      const py = row * T - panY;
+      const pw = previewDef.tilesW * T;
+      const ph = previewDef.tilesH * T;
+      const previewImg = enemyImagesRef.current[previewDef.id];
+      if (previewImg) {
+        ctx.save();
+        ctx.globalAlpha = valid ? 0.85 : 0.7;
+        ctx.drawImage(previewImg, px, py, pw, ph);
+        ctx.restore();
+      } else {
+        ctx.fillStyle = valid ? 'rgba(90, 210, 110, 0.45)' : 'rgba(220, 70, 70, 0.7)';
+        ctx.fillRect(px, py, pw, ph);
+      }
+      ctx.strokeStyle = valid ? 'rgba(120, 240, 140, 0.95)' : 'rgba(255, 90, 90, 0.95)';
+      ctx.lineWidth = 2 / zoom;
+      ctx.strokeRect(px, py, pw, ph);
+    }
+
     // player marker
     const pp = playerRef.current;
     if (pp) {
@@ -301,7 +502,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     ctx.restore();
 
     ctx.restore();
-  }, []);
+  }, [canPlaceEnemy]);
 
   // RAF loop
   useEffect(() => {
@@ -332,6 +533,14 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     img.src = tilemapUrl;
     img.onload = () => { imgRef.current = img; };
 
+    ENEMY_DEFINITIONS.forEach(def => {
+      const enemyImg = new Image();
+      enemyImg.src = def.spriteUrl;
+      enemyImg.onload = () => {
+        enemyImagesRef.current[def.id] = enemyImg;
+      };
+    });
+
     return () => window.removeEventListener('resize', resize);
   }, []);
 
@@ -345,17 +554,84 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     else gridRef.current.delete(key(col, row));
   };
 
+  const applyWater = (col: number, row: number, mode: 'place' | 'remove') => {
+    const mapCols = colsRef.current;
+    const mapRows = rowsRef.current;
+    if (col < 0 || col >= mapCols || row < 0 || row >= mapRows || isEdge(col, row, mapCols, mapRows)) return;
+    if (mode === 'place' && isSolid(col, row)) return; // can't place water over tiles
+    if (mode === 'place') waterRef.current.add(key(col, row));
+    else waterRef.current.delete(key(col, row));
+  };
+
   const startDrag = (col: number, row: number) => {
+    if (toolRef.current === 'enemy') return;
+    if (toolRef.current === 'water') {
+      const mode = isWaterCell(col, row) && !isEdge(col, row, colsRef.current, rowsRef.current) ? 'remove' : 'place';
+      dragRef.current = { active: true, mode, lastCol: col, lastRow: row };
+      applyWater(col, row, mode);
+      return;
+    }
     const mode = isSolid(col, row) && !isEdge(col, row, colsRef.current, rowsRef.current) ? 'remove' : 'place';
     dragRef.current = { active: true, mode, lastCol: col, lastRow: row };
     applyTile(col, row, mode);
   };
 
   const continueDrag = (col: number, row: number) => {
+    if (toolRef.current === 'enemy') return;
     const d = dragRef.current;
     if (!d.active || (col === d.lastCol && row === d.lastRow)) return;
     d.lastCol = col; d.lastRow = row;
-    applyTile(col, row, d.mode);
+    if (toolRef.current === 'water') applyWater(col, row, d.mode);
+    else applyTile(col, row, d.mode);
+  };
+
+  const placeOrRemoveEnemy = (col: number, row: number) => {
+    const existingIndex = getEnemyAt(col, row);
+    if (existingIndex >= 0) {
+      enemiesRef.current.splice(existingIndex, 1);
+      return;
+    }
+    const def = ENEMY_BY_ID[selectedEnemyRef.current];
+    if (!canPlaceEnemy(def, col, row)) return;
+    enemiesRef.current.push({
+      type: def.id,
+      col,
+      row,
+      damage: def.collisionDamage,
+      moving: def.movingByDefault,
+    });
+  };
+
+  const openEnemyOverride = (index: number) => {
+    const enemy = enemiesRef.current[index];
+    setEnemyOverride({
+      index,
+      damage: String(enemy.damage),
+      moving: enemy.moving,
+    });
+  };
+
+  const closeEnemyOverride = () => setEnemyOverride(null);
+
+  const saveEnemyOverride = () => {
+    if (!enemyOverride) return;
+    const parsedDamage = Number.parseInt(enemyOverride.damage, 10);
+    if (!Number.isFinite(parsedDamage) || parsedDamage < 1) {
+      showStatus('Damage must be at least 1');
+      return;
+    }
+    const current = enemiesRef.current[enemyOverride.index];
+    if (!current) {
+      setEnemyOverride(null);
+      return;
+    }
+    enemiesRef.current[enemyOverride.index] = {
+      ...current,
+      damage: parsedDamage,
+      moving: enemyOverride.moving,
+    };
+    setEnemyOverride(null);
+    showStatus('Enemy updated');
   };
 
   // ── mouse events ──────────────────────────────────────────────────────────
@@ -365,14 +641,24 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     e.preventDefault();
     canvasRef.current!.setPointerCapture(e.pointerId);
 
-    if (e.button === 1 || e.button === 2) {
-      panRef.current = { active: true, lastX: e.clientX, lastY: e.clientY };
-      return;
-    }
-
     const rect = canvasRect();
     const { wx, wy } = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
     const { col, row } = worldToGrid(wx, wy);
+
+    if (e.button === 2) {
+      const enemyIndex = getEnemyAt(col, row);
+      if (enemyIndex >= 0) {
+        openEnemyOverride(enemyIndex);
+        return;
+      }
+      if (!enemyOverride) panRef.current = { active: true, lastX: e.clientX, lastY: e.clientY };
+      return;
+    }
+
+    if (e.button === 1) {
+      panRef.current = { active: true, lastX: e.clientX, lastY: e.clientY };
+      return;
+    }
     const tol = 14 / camRef.current.zoom;
     const rightX = colsRef.current * T;
     const bottomY = rowsRef.current * T;
@@ -391,12 +677,34 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       if (col >= 0 && col < colsRef.current && row >= 0 && row < rowsRef.current) { playerRef.current = { col, row }; setHasPlayer(true); }
       return;
     }
+    if (toolRef.current === 'enemy') {
+      placeOrRemoveEnemy(col, row);
+      return;
+    }
     startDrag(col, row);
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
     if (e.pointerType === 'touch') return;
     e.preventDefault();
+    const rect = canvasRect();
+    const { wx, wy } = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+    const { col, row } = worldToGrid(wx, wy);
+    hoverGridRef.current = {
+      col,
+      row,
+      inside: col >= 0 && col < colsRef.current && row >= 0 && row < rowsRef.current,
+    };
+    const hoverEnemyIndex = getEnemyAt(col, row);
+    if (hoverEnemyIndex >= 0) {
+      setHoveredEnemyInfo({
+        screenX: e.clientX,
+        screenY: e.clientY,
+        enemy: enemiesRef.current[hoverEnemyIndex],
+      });
+    } else {
+      setHoveredEnemyInfo(null);
+    }
 
     if (panRef.current.active) {
       const cam = camRef.current;
@@ -408,8 +716,6 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     }
 
     if (resizeRef.current.active) {
-      const rect = canvasRect();
-      const { wx, wy } = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
       const edge = resizeRef.current.edge;
       if (edge === 'right') resizeGrid(Math.round(wx / T), rowsRef.current);
       else if (edge === 'bottom') resizeGrid(colsRef.current, Math.round(wy / T));
@@ -417,9 +723,6 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     }
 
     if (!dragRef.current.active) return;
-    const rect = canvasRect();
-    const { wx, wy } = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
-    const { col, row } = worldToGrid(wx, wy);
     continueDrag(col, row);
   };
 
@@ -429,6 +732,11 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     panRef.current.active = false;
     resizeRef.current.active = false;
     resizeRef.current.edge = null;
+  };
+
+  const onPointerLeave = () => {
+    hoverGridRef.current = { col: -1, row: -1, inside: false };
+    setHoveredEnemyInfo(null);
   };
 
   const onWheel = (e: React.WheelEvent) => {
@@ -479,6 +787,10 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       const { col, row } = worldToGrid(wx, wy);
       if (toolRef.current === 'player') {
         if (col >= 0 && col < colsRef.current && row >= 0 && row < rowsRef.current) { playerRef.current = { col, row }; setHasPlayer(true); }
+        return;
+      }
+      if (toolRef.current === 'enemy') {
+        placeOrRemoveEnemy(col, row);
         return;
       }
       startDrag(col, row);
@@ -551,6 +863,28 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       }
     }
     gridRef.current = newGrid;
+    // Load water zones
+    const newWater = new Set<string>();
+    if (data.waterZones) {
+      for (const z of data.waterZones) {
+        for (let r = z.row; r < z.row + z.h; r++) {
+          for (let c = z.col; c < z.col + z.w; c++) {
+            newWater.add(key(c, r));
+          }
+        }
+      }
+    }
+    waterRef.current = newWater;
+    setBgPreset(data.bgPreset ?? '');
+    enemiesRef.current = (data.enemies ?? [])
+      .filter(enemy => ENEMY_BY_ID[enemy.type as EnemyTypeId] != null)
+      .map(enemy => ({
+        type: enemy.type as EnemyTypeId,
+        col: enemy.col,
+        row: enemy.row,
+        damage: enemy.damage,
+        moving: enemy.moving,
+      }));
     playerRef.current = { col: data.spawnCol, row: data.spawnRow - 1 };
     setHasPlayer(true);
     colsRef.current = data.cols;
@@ -573,6 +907,9 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     setCols(DEFAULT_COLS);
     setRows(DEFAULT_ROWS);
     gridRef.current = buildInitialGrid(DEFAULT_COLS, DEFAULT_ROWS);
+    waterRef.current = new Set();
+    enemiesRef.current = [];
+    setBgPreset('');
     playerRef.current = null;
     setHasPlayer(false);
     const z = Math.min(window.innerWidth / (DEFAULT_COLS * T), window.innerHeight / (DEFAULT_ROWS * T)) * 0.9;
@@ -591,7 +928,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       setLoadSelected(0);
       setModalError(null);
       setShowLoadModal(true);
-    } catch (e) {
+    } catch {
       showStatus('Failed to load levels list');
     }
   };
@@ -616,7 +953,15 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       return;
     }
     try {
-      const content = exportLevelData(gridRef.current, playerRef.current, colsRef.current, rowsRef.current);
+      const content = exportLevelData(
+        gridRef.current,
+        waterRef.current,
+        playerRef.current,
+        enemiesRef.current,
+        colsRef.current,
+        rowsRef.current,
+        bgPreset,
+      );
       await saveLevel(currentFilename, content);
       showStatus(`Saved ${currentFilename}`);
     } catch (e) {
@@ -633,7 +978,15 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
   const handleSaveAsConfirm = async () => {
     if (!saveAsName.trim()) { setModalError('Name is required'); return; }
     try {
-      const content = exportLevelData(gridRef.current, playerRef.current, colsRef.current, rowsRef.current);
+      const content = exportLevelData(
+        gridRef.current,
+        waterRef.current,
+        playerRef.current,
+        enemiesRef.current,
+        colsRef.current,
+        rowsRef.current,
+        bgPreset,
+      );
       const filename = await saveAsLevel(saveAsName.trim(), content);
       setCurrentFilename(filename);
       setShowSaveAsModal(false);
@@ -646,6 +999,8 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
   const handleGenerate = () => {
     const { grid, playerCol, playerRow } = generateRandomLevel(colsRef.current, rowsRef.current);
     gridRef.current = grid;
+    waterRef.current = new Set();
+    enemiesRef.current = [];
     playerRef.current = { col: playerCol, row: playerRow };
     setHasPlayer(true);
     showStatus('Generated random level');
@@ -658,7 +1013,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       setLevelsList(levels);
       setModalError(null);
       setShowDeleteModal(true);
-    } catch (e) {
+    } catch {
       showStatus('Failed to fetch levels');
     }
   };
@@ -677,6 +1032,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
 
   const handleTryPlay = () => {
     const zones = extractZones(gridRef.current, colsRef.current, rowsRef.current);
+    const waterZones = extractZones(waterRef.current, colsRef.current, rowsRef.current);
     const spawnCol = playerRef.current?.col ?? 5;
     const spawnRow = playerRef.current != null ? playerRef.current.row + 1 : Math.max(1, rowsRef.current - 4);
     const levelData = {
@@ -687,6 +1043,9 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       spawnX: spawnCol * T,
       spawnY: spawnRow * T - 1,
       zones,
+      waterZones,
+      enemies: enemiesRef.current,
+      ...(bgPreset ? { bgPreset } : {}),
     };
     const encoded = btoa(JSON.stringify(levelData));
     const base = window.location.pathname;
@@ -711,10 +1070,11 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     <div style={{ position: 'relative', width: '100vw', height: '100vh', overflow: 'hidden' }}>
       <canvas
         ref={canvasRef}
-        style={{ display: 'block', cursor: tool === 'player' ? 'crosshair' : 'cell', touchAction: 'none' }}
+        style={{ display: 'block', cursor: tool === 'player' || tool === 'enemy' ? 'crosshair' : 'cell', touchAction: 'none' } as React.CSSProperties}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onPointerLeave={onPointerLeave}
         onWheel={onWheel}
         onContextMenu={onContextMenu}
         onTouchStart={onTouchStart}
@@ -775,24 +1135,78 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ color: '#888', fontSize: 11, fontFamily: 'monospace' }}>TOOL</span>
-        {(['tile', 'player'] as Tool[]).map(t => (
-          <button
-            key={t}
-            onClick={() => changeTool(t)}
-            style={{
-              ...btnBase,
-              background: tool === t ? '#3a5fc8' : 'rgba(40,40,60,0.8)',
-              color: tool === t ? '#fff' : '#999',
-              border: `1px solid ${tool === t ? '#5a7fe8' : '#3a3a55'}`,
-              padding: '5px 12px',
-            }}
-          >
-            {t === 'tile' ? 'Tile' : 'Player'}
-          </button>
-        ))}
+        {(['tile', 'water', 'player', 'enemy'] as Tool[]).map(t => {
+          const label = t === 'tile' ? 'Tile' : t === 'water' ? 'Water' : t === 'player' ? 'Player' : 'Enemies';
+          const activeBg = t === 'water' ? '#1a5f9c' : t === 'enemy' ? '#7b2b47' : '#3a5fc8';
+          const activeBorder = t === 'water' ? '#3a9fe8' : t === 'enemy' ? '#c85a7b' : '#5a7fe8';
+          return (
+            <button
+              key={t}
+              onClick={() => changeTool(t)}
+              style={{
+                ...btnBase,
+                background: tool === t ? activeBg : 'rgba(40,40,60,0.8)',
+                color: tool === t ? '#fff' : '#999',
+                border: `1px solid ${tool === t ? activeBorder : '#3a3a55'}`,
+                padding: '5px 12px',
+              }}
+            >
+              {label}
+            </button>
+          );
+        })}
         <span style={{ color: '#555', fontSize: 11, fontFamily: 'monospace', marginLeft: 8 }}>
           Scroll=zoom / RMB=pan / Drag blue edge to resize
         </span>
+        </div>
+        {tool === 'enemy' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
+            <span style={{ color: '#888', fontSize: 11, fontFamily: 'monospace' }}>ENEMY</span>
+            <select
+              value={selectedEnemyType}
+              onChange={e => {
+                const id = e.target.value as EnemyTypeId;
+                setSelectedEnemyType(id);
+                selectedEnemyRef.current = id;
+              }}
+              style={{
+                minWidth: 230,
+                padding: '4px 8px',
+                background: 'rgba(40,40,60,0.8)',
+                color: '#ccc',
+                border: '1px solid #3a3a55',
+                borderRadius: 6,
+                fontSize: 11,
+                fontFamily: 'monospace',
+                outline: 'none',
+              }}
+            >
+              {ENEMY_DEFINITIONS.map(enemy => (
+                <option key={enemy.id} value={enemy.id}>
+                  {enemy.name} | {enemy.tilesW}x{enemy.tilesH} | dmg {enemy.collisionDamage}
+                </option>
+              ))}
+            </select>
+            <span style={{ color: '#777', fontSize: 11, fontFamily: 'monospace' }}>
+              LMB place/remove, RMB edit stats
+            </span>
+          </div>
+        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ color: '#888', fontSize: 11, fontFamily: 'monospace' }}>BG</span>
+          <select
+            value={bgPreset}
+            onChange={e => setBgPreset(e.target.value)}
+            style={{
+              padding: '4px 8px', background: 'rgba(40,40,60,0.8)',
+              color: '#ccc', border: '1px solid #3a3a55', borderRadius: 6,
+              fontSize: 11, fontFamily: 'monospace', outline: 'none',
+            }}
+          >
+            {BG_OPTIONS.map(o => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
         </div>
       </div>
 
@@ -805,6 +1219,32 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
           backdropFilter: 'blur(4px)', zIndex: 20,
         }}>
           {statusMsg}
+        </div>
+      )}
+
+      {hoveredEnemyInfo && (
+        <div style={{
+          position: 'fixed',
+          left: hoveredEnemyInfo.screenX + 12,
+          top: hoveredEnemyInfo.screenY + 12,
+          pointerEvents: 'none',
+          zIndex: 25,
+          padding: '8px 10px',
+          background: 'rgba(12,12,22,0.92)',
+          border: '1px solid #734',
+          borderRadius: 6,
+          color: '#ddd',
+          fontSize: 11,
+          fontFamily: 'monospace',
+          lineHeight: 1.4,
+          maxWidth: 240,
+        }}>
+          <div style={{ color: '#f2a4ba', fontWeight: 700 }}>
+            {ENEMY_BY_ID[hoveredEnemyInfo.enemy.type].name}
+          </div>
+          <div>Health taken on collision: {hoveredEnemyInfo.enemy.damage}</div>
+          <div>Movement: {hoveredEnemyInfo.enemy.moving ? 'Moving' : 'Static'}</div>
+          <div>Size: {ENEMY_BY_ID[hoveredEnemyInfo.enemy.type].tilesW}x{ENEMY_BY_ID[hoveredEnemyInfo.enemy.type].tilesH} tiles</div>
         </div>
       )}
 
@@ -829,6 +1269,59 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
           Try to Play
         </button>
       </div>
+
+      {/* ── Load Modal ─────────────────────────────────────────────────── */}
+      {enemyOverride && enemiesRef.current[enemyOverride.index] && (
+        <div style={modalOverlay} onClick={closeEnemyOverride}>
+          <div style={modalBox} onClick={e => e.stopPropagation()}>
+            <h3 style={modalTitle}>Enemy Override</h3>
+            <div style={{ color: '#f2a4ba', fontSize: 13, fontFamily: 'monospace', marginBottom: 12 }}>
+              {ENEMY_BY_ID[enemiesRef.current[enemyOverride.index].type].name}
+            </div>
+            <label style={{ display: 'block', color: '#aaa', fontSize: 12, fontFamily: 'monospace', marginBottom: 6 }}>
+              Damage (health taken on collision)
+            </label>
+            <input
+              type="number"
+              min={1}
+              value={enemyOverride.damage}
+              onChange={e => setEnemyOverride(prev => (prev ? { ...prev, damage: e.target.value } : prev))}
+              autoFocus
+              style={{
+                width: '100%',
+                padding: '10px 12px',
+                background: 'rgba(10,10,20,0.9)',
+                border: '1px solid #556',
+                borderRadius: 6,
+                color: '#ddd',
+                fontSize: 14,
+                fontFamily: 'monospace',
+                outline: 'none',
+                boxSizing: 'border-box',
+              }}
+            />
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14, color: '#ccc', fontSize: 12, fontFamily: 'monospace' }}>
+              <input
+                type="checkbox"
+                checked={enemyOverride.moving}
+                onChange={e => setEnemyOverride(prev => (prev ? { ...prev, moving: e.target.checked } : prev))}
+              />
+              Moving enemy
+            </label>
+            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+              <button
+                onClick={saveEnemyOverride}
+                style={{ ...btnBase, background: '#7b2b47', color: '#fff', border: '1px solid #c85a7b' }}
+              >
+                Save
+              </button>
+              <button onClick={closeEnemyOverride} style={btnBase}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Load Modal ─────────────────────────────────────────────────── */}
       {showLoadModal && (

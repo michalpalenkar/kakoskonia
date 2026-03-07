@@ -8,6 +8,11 @@ import {
 } from '../constants';
 import type { Rect, InputState, SpriteSheet, AnimState } from '../types';
 
+const WATER_MOVE_FACTOR = 0.6;
+const WATER_SINK_SPEED = 2.5;
+const WATER_MAX_FALL = 4;
+const WATER_JUMP_VEL = -10;
+
 export class Player {
   x: number;
   y: number;
@@ -15,6 +20,10 @@ export class Player {
   vy = 0;
   grounded = false;
   facingLeft = true;   // sprites face LEFT by default
+  health = 5;
+  maxHealth = 5;
+  inWater = false;
+  onWaterSurface = false;
 
   animState: AnimState = 'idle';
   animFrame = 0;
@@ -27,6 +36,8 @@ export class Player {
   private dashCooldown = 0;
   private airDashAvailable = true;
   private dashDir = -1;
+  private knockbackFrames = 0;
+  private knockbackVx = 0;
 
   sprites: Partial<Record<string, SpriteSheet>> = {};
 
@@ -35,7 +46,22 @@ export class Player {
     this.y = y;
   }
 
-  update(input: InputState, colliders: Rect[]) {
+  update(input: InputState, colliders: Rect[], waterRects: Rect[] = []) {
+    // ── Water detection ─────────────────────────────────────────────────────
+    this.inWater = false;
+    this.onWaterSurface = false;
+    for (const wr of waterRects) {
+      if (this.overlapsRect(wr)) {
+        this.inWater = true;
+        // Surface = player's vertical center is above the water rect top + half tile
+        const playerMidY = this.y + PLAYER_H / 2;
+        if (playerMidY <= wr.y + PLAYER_H * 0.4) {
+          this.onWaterSurface = true;
+        }
+        break;
+      }
+    }
+
     if (this.dashCooldown > 0) this.dashCooldown--;
 
     if (this.grounded) {
@@ -54,15 +80,19 @@ export class Player {
     }
 
     // ── Horizontal movement ────────────────────────────────────────────────
-    if (this.dashTimer > 0) {
+    const moveSpeed = this.inWater ? MOVE_SPEED * WATER_MOVE_FACTOR : MOVE_SPEED;
+    if (this.knockbackFrames > 0) {
+      this.vx = this.knockbackVx;
+      this.knockbackFrames--;
+    } else if (this.dashTimer > 0 && !this.inWater) {
       this.vx = this.dashDir * DASH_SPEED;
       this.facingLeft = this.dashDir < 0;
       this.dashTimer--;
     } else if (input.left) {
-      this.vx = -MOVE_SPEED;
+      this.vx = -moveSpeed;
       this.facingLeft = true;
     } else if (input.right) {
-      this.vx = MOVE_SPEED;
+      this.vx = moveSpeed;
       this.facingLeft = false;
     } else {
       this.vx = 0;
@@ -85,7 +115,13 @@ export class Player {
 
     // ── Jump logic ─────────────────────────────────────────────────────────
     if (input.jumpJustPressed && this.dashTimer === 0) {
-      if (this.coyoteTimer > 0) {
+      if (this.inWater) {
+        // In water: only jump when on surface
+        if (this.onWaterSurface) {
+          this.vy = WATER_JUMP_VEL;
+          this.jumpBuffer = 0;
+        }
+      } else if (this.coyoteTimer > 0) {
         // First jump (ground or coyote)
         this.vy = JUMP_VEL;
         this.grounded = false;
@@ -106,12 +142,29 @@ export class Player {
 
     // ── Gravity (asymmetric: lighter up, heavier down) ─────────────────────
     if (this.dashTimer === 0) {
-      const grav = this.vy < 0 ? GRAVITY_UP : GRAVITY_DOWN;
-      this.vy = Math.min(this.vy + grav, MAX_FALL);
+      if (this.inWater) {
+        // In water: slow sink, dampen upward velocity
+        if (this.vy < 0) {
+          this.vy = Math.min(this.vy + GRAVITY_UP * 1.5, 0);
+        } else {
+          this.vy = Math.min(this.vy + 0.15, WATER_SINK_SPEED);
+        }
+        // Swim up with up key
+        if (input.jump && !input.jumpJustPressed) {
+          this.vy = Math.max(this.vy - 0.6, -WATER_MAX_FALL);
+        }
+        // Swim down with down key
+        if (input.down) {
+          this.vy = Math.min(this.vy + 0.4, WATER_MAX_FALL);
+        }
+      } else {
+        const grav = this.vy < 0 ? GRAVITY_UP : GRAVITY_DOWN;
+        this.vy = Math.min(this.vy + grav, MAX_FALL);
+      }
     }
 
-    // Fast fall
-    if (this.dashTimer === 0 && input.down && !this.grounded && this.vy > 0) {
+    // Fast fall (not in water)
+    if (this.dashTimer === 0 && !this.inWater && input.down && !this.grounded && this.vy > 0) {
       this.vy = Math.min(this.vy + 0.6, MAX_FALL);
     }
 
@@ -188,6 +241,15 @@ export class Player {
     }
   }
 
+  overlapsRect(r: Rect): boolean {
+    return (
+      this.x < r.x + r.w &&
+      this.x + PLAYER_W > r.x &&
+      this.y < r.y + r.h &&
+      this.y + PLAYER_H > r.y
+    );
+  }
+
   private overlaps(r: Rect): boolean {
     return (
       this.x < r.x + r.w &&
@@ -262,5 +324,12 @@ export class Player {
         screenX + PLAYER_W / 2 - dw / 2, screenY, dw, dh);
     }
     ctx.restore();
+  }
+
+  applyKnockback(direction: -1 | 1, horizontalSpeed: number, verticalSpeed: number, frames: number) {
+    this.knockbackVx = direction * Math.abs(horizontalSpeed);
+    this.knockbackFrames = Math.max(1, Math.floor(frames));
+    this.vy = verticalSpeed;
+    this.grounded = false;
   }
 }

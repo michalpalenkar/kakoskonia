@@ -6,9 +6,15 @@ import { TILE_DSP as TILE_SIZE } from './AutoTile';
 import { loadImage, loadSpriteTransparent } from './spriteUtils';
 import type { InputState, SpriteSheet } from './types';
 import type { LevelData } from './levels';
+import { ENEMY_BY_ID, type EnemyTypeId } from './enemyDefinitions';
 
-const bgUrl      = new URL('../assets/bg.png',                 import.meta.url).href;
-const kedyBgUrl  = new URL('../assets/bg-kedy-pucdej.png',     import.meta.url).href;
+const healthBarUrl = new URL('../assets/health-bar.png',         import.meta.url).href;
+
+const BG_PRESETS: Record<string, string> = {
+  bg: new URL('../assets/bg/bg.png', import.meta.url).href,
+  'bg-kedy-pucdej': new URL('../assets/bg/bg-kedy-pucdej.png', import.meta.url).href,
+};
+const BG_FALLBACK_COLOR = '#334863';
 const tilemapUrl = new URL('../assets/kakoskonia_tilemap.png', import.meta.url).href;
 const idleUrl    = new URL('../assets/steady-sprite.png',      import.meta.url).href;
 const runUrl     = new URL('../assets/run-sprite.png',         import.meta.url).href;
@@ -45,6 +51,22 @@ interface SkyCloud {
   alpha: number;
 }
 
+interface RuntimeEnemy {
+  type: EnemyTypeId;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  damage: number;
+  moving: boolean;
+  dir: -1 | 1;
+  speed: number;
+}
+
+interface GameHooks {
+  onGameOver?: (message: string) => void;
+}
+
 export class Game {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
@@ -53,10 +75,17 @@ export class Game {
   private camera: Camera;
   private tileMap!: TileMap;
 
-  private bgImg!: HTMLImageElement;
-  private kedyBgImg!: HTMLImageElement;
+  private bgImg: HTMLImageElement | null = null;
   private tilemapImg!: HTMLImageElement;
+  private healthBarImg!: HTMLImageElement;
   private natureImgs: HTMLImageElement[] = [];
+  private enemyImgs: Partial<Record<EnemyTypeId, HTMLImageElement>> = {};
+  private enemies: RuntimeEnemy[] = [];
+  private enemyHitCooldown = 0;
+  private gameOver = false;
+  private gameOverAnnounced = false;
+  private shakeFrames = 0;
+  private shakeMagnitude = 0;
   private overlays: NatureOverlay[] = [];
   private skyClouds: SkyCloud[] = [];
 
@@ -79,36 +108,54 @@ export class Game {
   private running = false;
 
   private level: LevelData;
+  private hooks: GameHooks;
 
-  constructor(canvas: HTMLCanvasElement, level: LevelData) {
+  constructor(canvas: HTMLCanvasElement, level: LevelData, hooks: GameHooks = {}) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d')!;
     this.level = level;
+    this.hooks = hooks;
     this.player = new Player(level.spawnX, level.spawnY - PLAYER_H);
     this.camera = new Camera();
     this.skyClouds = this.buildSkyClouds();
   }
 
   async init() {
-    const [bgImg, kedyBgImg, tilemapImg, idleCanvas, runCanvas, jumpCanvas, ...natureImgs] = await Promise.all([
-      loadImage(bgUrl),
-      loadImage(kedyBgUrl),
+    // Load bg image for the level's preset (if any)
+    const bgPreset = this.level.bgPreset;
+    const bgUrlForLevel = bgPreset ? BG_PRESETS[bgPreset] : undefined;
+    const bgPromise = bgUrlForLevel ? loadImage(bgUrlForLevel).catch(() => null) : Promise.resolve(null);
+    const enemyEntries = Object.entries(ENEMY_BY_ID) as [EnemyTypeId, (typeof ENEMY_BY_ID)[EnemyTypeId]][];
+
+    const [bgImg, tilemapImg, healthBarImg, idleCanvas, runCanvas, jumpCanvas, ...restAssets] = await Promise.all([
+      bgPromise,
       loadImage(tilemapUrl),
+      loadImage(healthBarUrl),
       loadSpriteTransparent(idleUrl),
       loadSpriteTransparent(runUrl),
       loadSpriteTransparent(jumpUrl),
       ...natureUrls.map(loadImage),
+      ...enemyEntries.map(([id, enemy]) => loadImage(enemy.spriteUrl).then(img => ({ id, img }))),
     ]);
 
+    const natureImgs = restAssets.slice(0, natureUrls.length) as HTMLImageElement[];
+    const enemyImgsLoaded = restAssets.slice(natureUrls.length) as { id: EnemyTypeId; img: HTMLImageElement }[];
+
     this.bgImg      = bgImg;
-    this.kedyBgImg  = kedyBgImg;
     this.tilemapImg = tilemapImg;
+    this.healthBarImg = healthBarImg;
     this.natureImgs = natureImgs;
+    this.enemyImgs = {};
+    for (const loaded of enemyImgsLoaded) {
+      this.enemyImgs[loaded.id] = loaded.img;
+    }
 
     // Build tile grid + collision rects
-    this.tileMap = new TileMap(this.level.cols, this.level.rows, this.level.zones);
+    this.tileMap = new TileMap(this.level.cols, this.level.rows, this.level.zones, this.level.waterZones ?? []);
     const colliders = this.tileMap.buildCollisionRects();
+    this._waterRects = this.tileMap.buildWaterRects();
     this.overlays = this.buildNatureOverlays();
+    this.enemies = this.buildLevelEnemies();
 
     // Sprite sheets
     // steady-sprite.png  4305 × 2114  3 frames  fps 8
@@ -141,6 +188,7 @@ export class Game {
   }
 
   private _colliders: import('./types').Rect[] = [];
+  private _waterRects: import('./types').Rect[] = [];
 
   start() {
     this.running  = true;
@@ -169,12 +217,18 @@ export class Game {
     const worldH = this.tileMap.rows * TILE_SIZE;
 
     while (this.accumulator >= FIXED_DT) {
-      this.updateInput();
-      this.player.update(this.input, this._colliders);
-      this.camera.update(
-        this.player.x, this.player.y, PLAYER_W, PLAYER_H,
-        evw, evh, this.player.facingLeft, worldW, worldH,
-      );
+      if (!this.gameOver) {
+        this.updateInput();
+        this.updateEnemies();
+        const enemyColliders = this.enemies.map(enemy => ({ x: enemy.x, y: enemy.y, w: enemy.w, h: enemy.h }));
+        this.player.update(this.input, this._colliders.concat(enemyColliders), this._waterRects);
+        this.applyEnemyDamageToPlayer();
+        this.camera.update(
+          this.player.x, this.player.y, PLAYER_W, PLAYER_H,
+          evw, evh, this.player.facingLeft, worldW, worldH,
+        );
+      }
+      if (this.shakeFrames > 0) this.shakeFrames--;
       this.accumulator -= FIXED_DT;
     }
 
@@ -209,8 +263,10 @@ export class Game {
     const { ctx, canvas } = this;
     const vw   = canvas.width;
     const vh   = canvas.height;
-    const camX = this.camera.x;
-    const camY = this.camera.y;
+    const shakeX = this.shakeFrames > 0 ? (Math.random() * 2 - 1) * this.shakeMagnitude : 0;
+    const shakeY = this.shakeFrames > 0 ? (Math.random() * 2 - 1) * this.shakeMagnitude : 0;
+    const camX = this.camera.x + shakeX;
+    const camY = this.camera.y + shakeY;
 
     ctx.clearRect(0, 0, vw, vh);
     this.drawBg(camX, camY, vw, vh, worldW, worldH);
@@ -223,7 +279,10 @@ export class Game {
     ctx.fillRect(0, 0, evw, evh);
 
     // Auto-tiled level
-    this.tileMap.render(ctx, this.tilemapImg, camX, camY, evw, evh);
+    this.tileMap.render(ctx, this.tilemapImg, camX, camY, evw, evh, true);
+
+    // Enemies
+    this.drawEnemies(camX, camY, evw, evh);
 
     // Player
     this.player.draw(ctx, camX, camY);
@@ -233,13 +292,67 @@ export class Game {
 
     ctx.restore();
 
-    this.drawHUD(vw);
+    this.drawHealthBar();
+  }
+
+  // Source rects from health-bar.png (332×199)
+  // Big portrait head (static)
+  private static HUD_PORTRAIT = { sx: 0, sy: 0, sw: 216, sh: 199 };
+  // Full health icon (small alien face)
+  private static HUD_FULL     = { sx: 214, sy: 25, sw: 54, sh: 70 };
+  // Empty health slot (dark oval)
+  private static HUD_EMPTY    = { sx: 276, sy: 25, sw: 52, sh: 70 };
+
+  private drawHealthBar() {
+    const { ctx } = this;
+    const { health, maxHealth } = this.player;
+    const portrait = Game.HUD_PORTRAIT;
+    const full  = Game.HUD_FULL;
+    const empty = Game.HUD_EMPTY;
+
+    const portraitH = 48;
+    const portraitW = portraitH * (portrait.sw / portrait.sh);
+    const x0 = 12;
+    const y0 = 10;
+
+    ctx.save();
+    ctx.imageSmoothingEnabled = true;
+
+    // Static portrait
+    ctx.drawImage(
+      this.healthBarImg,
+      portrait.sx, portrait.sy, portrait.sw, portrait.sh,
+      x0, y0, portraitW, portraitH,
+    );
+
+    // Health icons next to portrait
+    const slotH = 24;
+    const gap = 2;
+    let dx = x0 + portraitW + 4;
+    const dy = y0 + (portraitH - slotH) / 2;
+    for (let i = 0; i < maxHealth; i++) {
+      const src = i < health ? full : empty;
+      const dw = slotH * (src.sw / src.sh);
+      ctx.drawImage(
+        this.healthBarImg,
+        src.sx, src.sy, src.sw, src.sh,
+        dx, dy, dw, slotH,
+      );
+      dx += dw + gap;
+    }
+    ctx.restore();
   }
 
   private drawBg(camX: number, camY: number, vw: number, vh: number, worldW: number, worldH: number) {
     const { ctx } = this;
-    const isKedyPucdej = this.isKedyPucdejLevel();
-    const bgImg = isKedyPucdej ? this.kedyBgImg : this.bgImg;
+    const bgImg = this.bgImg;
+
+    if (!bgImg) {
+      ctx.fillStyle = BG_FALLBACK_COLOR;
+      ctx.fillRect(0, 0, vw, vh);
+      return;
+    }
+
     const scale  = Math.max(vw / bgImg.naturalWidth, vh / bgImg.naturalHeight);
     const drawW  = bgImg.naturalWidth  * scale;
     const drawH  = bgImg.naturalHeight * scale;
@@ -255,19 +368,16 @@ export class Game {
     const offsetY    = -(ty * maxOffsetY * 0.15);
 
     ctx.drawImage(bgImg, offsetX, offsetY, drawW, drawH);
-    if (isKedyPucdej) this.drawMovingClouds(vw, vh);
 
-    const bgTone = isKedyPucdej
-      ? 'rgba(24, 56, 38, 0.22)'
-      : 'rgba(0, 0, 0, 0)';
-    if (bgTone !== 'rgba(0, 0, 0, 0)') {
-      ctx.fillStyle = bgTone;
+    const isKedy = this.level.bgPreset === 'bg-kedy-pucdej';
+    if (isKedy) {
+      this.drawMovingClouds(vw, vh);
+      ctx.fillStyle = 'rgba(24, 56, 38, 0.22)';
       ctx.fillRect(0, 0, vw, vh);
     }
 
-    // Fill any uncovered gap at the bottom with ground colour
     if (drawH + offsetY < vh) {
-      ctx.fillStyle = isKedyPucdej ? '#2e4a2e' : '#4a5a38';
+      ctx.fillStyle = isKedy ? '#2e4a2e' : '#4a5a38';
       ctx.fillRect(0, drawH + offsetY, vw, vh - (drawH + offsetY));
     }
   }
@@ -292,13 +402,128 @@ export class Game {
     }
   }
 
-  private drawHUD(vw: number) {
-    const { ctx } = this;
-    ctx.fillStyle = 'rgba(220, 210, 200, 0.6)';
-    ctx.font      = '12px monospace';
-    ctx.textAlign = 'right';
-    ctx.fillText('WASD / Arrows · Jump: W/Space/Z · Dash: C · Double-jump: press again in air', vw - 14, 22);
+  private buildLevelEnemies(): RuntimeEnemy[] {
+    const source = this.level.enemies ?? [];
+    const enemies: RuntimeEnemy[] = [];
+    for (const enemy of source) {
+      const def = ENEMY_BY_ID[enemy.type as EnemyTypeId];
+      if (!def) continue;
+      enemies.push({
+        type: def.id,
+        x: enemy.col * TILE_SIZE,
+        y: enemy.row * TILE_SIZE,
+        w: def.tilesW * TILE_SIZE,
+        h: def.tilesH * TILE_SIZE,
+        damage: Math.max(1, enemy.damage || def.collisionDamage),
+        moving: !!enemy.moving,
+        dir: 1,
+        speed: 70,
+      });
+    }
+    return enemies;
   }
+
+  private updateEnemies() {
+    const dt = FIXED_DT;
+    if (this.enemyHitCooldown > 0) this.enemyHitCooldown--;
+
+    for (const enemy of this.enemies) {
+      if (!enemy.moving) continue;
+      const nextX = enemy.x + enemy.dir * enemy.speed * dt;
+      const maxX = this.tileMap.cols * TILE_SIZE - enemy.w;
+
+      const hitsWall = this.rectHitsColliders(nextX, enemy.y, enemy.w, enemy.h);
+      const hasGroundAhead = this.hasGroundInFront(nextX, enemy);
+      const outOfBounds = nextX < 0 || nextX > maxX;
+      if (hitsWall || !hasGroundAhead || outOfBounds) {
+        enemy.dir = enemy.dir === 1 ? -1 : 1;
+        continue;
+      }
+      enemy.x = nextX;
+    }
+  }
+
+  private applyEnemyDamageToPlayer() {
+    if (this.enemyHitCooldown > 0) return;
+    for (const enemy of this.enemies) {
+      if (!this.rectsTouchOrOverlap(this.player.x, this.player.y, PLAYER_W, PLAYER_H, enemy.x, enemy.y, enemy.w, enemy.h)) continue;
+      this.player.health = Math.max(0, this.player.health - enemy.damage);
+      const playerCenter = this.player.x + PLAYER_W / 2;
+      const enemyCenter = enemy.x + enemy.w / 2;
+      const knockDir = playerCenter >= enemyCenter ? 1 : -1;
+      // 8 px/frame for 8 frames ~= one tile knockback (64 px).
+      this.player.applyKnockback(knockDir, 8, -8.5, 8);
+      this.shakeFrames = 10;
+      this.shakeMagnitude = 5;
+      this.enemyHitCooldown = 42;
+      if (this.player.health <= 0) this.triggerGameOver();
+      break;
+    }
+  }
+
+  private drawEnemies(camX: number, camY: number, viewW: number, viewH: number) {
+    const { ctx } = this;
+    for (const enemy of this.enemies) {
+      if (enemy.x + enemy.w < camX || enemy.x > camX + viewW || enemy.y + enemy.h < camY || enemy.y > camY + viewH) continue;
+      const img = this.enemyImgs[enemy.type];
+      if (img) {
+        ctx.drawImage(img, enemy.x - camX, enemy.y - camY, enemy.w, enemy.h);
+      } else {
+        ctx.fillStyle = '#af495c';
+        ctx.fillRect(enemy.x - camX, enemy.y - camY, enemy.w, enemy.h);
+      }
+      ctx.strokeStyle = 'rgba(20, 10, 20, 0.6)';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(enemy.x - camX, enemy.y - camY, enemy.w, enemy.h);
+    }
+  }
+
+  private hasGroundInFront(nextX: number, enemy: RuntimeEnemy): boolean {
+    const probeX = enemy.dir > 0 ? nextX + enemy.w + 1 : nextX - 1;
+    const probeY = enemy.y + enemy.h + 1;
+    const col = Math.floor(probeX / TILE_SIZE);
+    const row = Math.floor(probeY / TILE_SIZE);
+    return this.tileMap.isSolid(col, row);
+  }
+
+  private rectHitsColliders(x: number, y: number, w: number, h: number): boolean {
+    for (const r of this._colliders) {
+      if (this.rectsOverlap(x, y, w, h, r.x, r.y, r.w, r.h)) return true;
+    }
+    return false;
+  }
+
+  private rectsOverlap(
+    ax: number, ay: number, aw: number, ah: number,
+    bx: number, by: number, bw: number, bh: number,
+  ): boolean {
+    return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+  }
+
+  private rectsTouchOrOverlap(
+    ax: number, ay: number, aw: number, ah: number,
+    bx: number, by: number, bw: number, bh: number,
+  ): boolean {
+    return ax <= bx + bw && ax + aw >= bx && ay <= by + bh && ay + ah >= by;
+  }
+
+  private triggerGameOver() {
+    if (this.gameOver) return;
+    this.gameOver = true;
+    this.shakeFrames = 22;
+    this.shakeMagnitude = 8;
+    if (this.gameOverAnnounced) return;
+    this.gameOverAnnounced = true;
+    const messages = [
+      'You got absolutely bonked. Retry and bonk them back.',
+      'Hero temporarily offline. Press Retry to continue the legend.',
+      'That enemy had plot armor. Retry and rewrite the script.',
+      'Game over, but your comeback arc is loading.',
+    ];
+    const msg = messages[Math.floor(Math.random() * messages.length)];
+    this.hooks.onGameOver?.(msg);
+  }
+
 
   private resizeCanvas = () => {
     this.canvas.width  = window.innerWidth;
@@ -326,6 +551,7 @@ export class Game {
     for (let r = 0; r < this.level.rows; r++) {
       for (let c = 0; c < this.level.cols; c++) {
         if (!this.tileMap.isSolid(c, r)) continue;
+        if (r === 0) continue; // no nature on top row
         if (this.tileMap.isSolid(c, r - 1)) continue; // only tile tops exposed to air
         if (rand() > OVERLAY_DENSITY) continue;
 
@@ -385,10 +611,6 @@ export class Game {
     return out;
   }
 
-  private isKedyPucdejLevel(): boolean {
-    if (this.level.bgPreset === 'kedy_pucdej') return true;
-    return this.level.name.toLowerCase().includes('kedy');
-  }
 }
 
 function makeSheet(canvas: HTMLCanvasElement, frames: number, fps: number): SpriteSheet {
