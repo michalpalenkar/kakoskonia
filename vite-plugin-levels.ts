@@ -68,6 +68,7 @@ function parseLevelFile(filename: string): {
   zones: { col: number; row: number; w: number; h: number }[];
   waterZones?: { col: number; row: number; w: number; h: number }[];
   bgPreset?: string;
+  bgmPreset?: string;
   enemies?: { type: string; col: number; row: number; damage: number; moving: boolean }[];
 } | null {
   const filepath = join(LEVELS_DIR, `${filename}.ts`);
@@ -85,6 +86,7 @@ function parseLevelFile(filename: string): {
   const waterZones = parseZoneBlock(content, 'WATER_ZONES');
   const enemies = parseEnemiesBlock(content);
   const bgPresetMatch = content.match(/BG_PRESET\s*=\s*'([^']+)'/);
+  const bgmPresetMatch = content.match(/BGM_PRESET\s*=\s*'([^']+)'/);
 
   return {
     name: filename,
@@ -95,6 +97,7 @@ function parseLevelFile(filename: string): {
     zones,
     ...(waterZones.length ? { waterZones } : {}),
     ...(bgPresetMatch ? { bgPreset: bgPresetMatch[1] } : {}),
+    ...(bgmPresetMatch ? { bgmPreset: bgmPresetMatch[1] } : {}),
     ...(enemies.length ? { enemies } : {}),
   };
 }
@@ -105,7 +108,7 @@ function rebuildIndex() {
   const entries = files
     .map((f, i) => {
       const displayName = f.replace(/([a-z])(\d)/g, '$1 $2').replace(/^./, s => s.toUpperCase()).replace(/_/g, ' ');
-      return `  {\n    id: ${i + 1},\n    name: '${displayName}',\n    cols: ${f}.TILE_COLS,\n    rows: ${f}.TILE_ROWS,\n    spawnX: ${f}.SPAWN_X,\n    spawnY: ${f}.SPAWN_Y,\n    zones: ${f}.LEVEL_ZONES,\n    waterZones: (${f} as any).WATER_ZONES ?? [],\n    bgPreset: (${f} as any).BG_PRESET ?? undefined,\n    enemies: (${f} as any).ENEMIES ?? [],\n  },`;
+      return `  {\n    id: ${i + 1},\n    name: '${displayName}',\n    cols: ${f}.TILE_COLS,\n    rows: ${f}.TILE_ROWS,\n    spawnX: ${f}.SPAWN_X,\n    spawnY: ${f}.SPAWN_Y,\n    zones: ${f}.LEVEL_ZONES,\n    waterZones: (${f} as any).WATER_ZONES ?? [],\n    bgPreset: (${f} as any).BG_PRESET ?? undefined,\n    bgmPreset: (${f} as any).BGM_PRESET ?? undefined,\n    enemies: (${f} as any).ENEMIES ?? [],\n  },`;
     })
     .join('\n');
 
@@ -123,6 +126,7 @@ export interface LevelData {
   zones: TileZone[];
   waterZones?: TileZone[];
   bgPreset?: string;
+  bgmPreset?: string;
   enemies?: EnemyPlacement[];
 }
 

@@ -1,14 +1,10 @@
 import type { TileZone } from '../TileMap';
 import type { EnemyPlacement } from './levelTools';
+import * as dunaj from './dunaj';
 import * as hlavacikova from './hlavacikova';
 import * as kedy_pucdej from './kedy_pucdej';
 import * as tami_level_backup from './tami_level_backup';
 import * as vyhlad_na_rakusko from './vyhlad_na_rakusko';
-
-function optionalModuleField<T>(mod: object, field: string): T | undefined {
-  if (!(field in mod)) return undefined;
-  return (mod as Record<string, unknown>)[field] as T;
-}
 
 export interface LevelData {
   id: number;
@@ -20,56 +16,74 @@ export interface LevelData {
   zones: TileZone[];
   waterZones?: TileZone[];
   bgPreset?: string;
+  bgmPreset?: string;
   enemies?: EnemyPlacement[];
 }
 
 export const LEVELS: LevelData[] = [
   {
     id: 1,
+    name: 'Dunaj',
+    cols: dunaj.TILE_COLS,
+    rows: dunaj.TILE_ROWS,
+    spawnX: dunaj.SPAWN_X,
+    spawnY: dunaj.SPAWN_Y,
+    zones: dunaj.LEVEL_ZONES,
+    waterZones: (dunaj as any).WATER_ZONES ?? [],
+    bgPreset: (dunaj as any).BG_PRESET ?? undefined,
+    bgmPreset: (dunaj as any).BGM_PRESET ?? undefined,
+    enemies: (dunaj as any).ENEMIES ?? [],
+  },
+  {
+    id: 2,
     name: 'Hlavacikova',
     cols: hlavacikova.TILE_COLS,
     rows: hlavacikova.TILE_ROWS,
     spawnX: hlavacikova.SPAWN_X,
     spawnY: hlavacikova.SPAWN_Y,
     zones: hlavacikova.LEVEL_ZONES,
-    waterZones: optionalModuleField<TileZone[]>(hlavacikova, 'WATER_ZONES') ?? [],
-    bgPreset: optionalModuleField<string>(hlavacikova, 'BG_PRESET'),
-    enemies: optionalModuleField<EnemyPlacement[]>(hlavacikova, 'ENEMIES') ?? [],
+    waterZones: (hlavacikova as any).WATER_ZONES ?? [],
+    bgPreset: (hlavacikova as any).BG_PRESET ?? undefined,
+    bgmPreset: (hlavacikova as any).BGM_PRESET ?? undefined,
+    enemies: (hlavacikova as any).ENEMIES ?? [],
   },
   {
-    id: 2,
+    id: 3,
     name: 'Kedy pucdej',
     cols: kedy_pucdej.TILE_COLS,
     rows: kedy_pucdej.TILE_ROWS,
     spawnX: kedy_pucdej.SPAWN_X,
     spawnY: kedy_pucdej.SPAWN_Y,
     zones: kedy_pucdej.LEVEL_ZONES,
-    waterZones: optionalModuleField<TileZone[]>(kedy_pucdej, 'WATER_ZONES') ?? [],
-    bgPreset: optionalModuleField<string>(kedy_pucdej, 'BG_PRESET'),
-    enemies: optionalModuleField<EnemyPlacement[]>(kedy_pucdej, 'ENEMIES') ?? [],
+    waterZones: (kedy_pucdej as any).WATER_ZONES ?? [],
+    bgPreset: (kedy_pucdej as any).BG_PRESET ?? undefined,
+    bgmPreset: (kedy_pucdej as any).BGM_PRESET ?? undefined,
+    enemies: (kedy_pucdej as any).ENEMIES ?? [],
   },
   {
-    id: 3,
+    id: 4,
     name: 'Tami level backup',
     cols: tami_level_backup.TILE_COLS,
     rows: tami_level_backup.TILE_ROWS,
     spawnX: tami_level_backup.SPAWN_X,
     spawnY: tami_level_backup.SPAWN_Y,
     zones: tami_level_backup.LEVEL_ZONES,
-    waterZones: optionalModuleField<TileZone[]>(tami_level_backup, 'WATER_ZONES') ?? [],
-    bgPreset: optionalModuleField<string>(tami_level_backup, 'BG_PRESET'),
-    enemies: optionalModuleField<EnemyPlacement[]>(tami_level_backup, 'ENEMIES') ?? [],
+    waterZones: (tami_level_backup as any).WATER_ZONES ?? [],
+    bgPreset: (tami_level_backup as any).BG_PRESET ?? undefined,
+    bgmPreset: (tami_level_backup as any).BGM_PRESET ?? undefined,
+    enemies: (tami_level_backup as any).ENEMIES ?? [],
   },
   {
-    id: 4,
+    id: 5,
     name: 'Vyhlad na rakusko',
     cols: vyhlad_na_rakusko.TILE_COLS,
     rows: vyhlad_na_rakusko.TILE_ROWS,
     spawnX: vyhlad_na_rakusko.SPAWN_X,
     spawnY: vyhlad_na_rakusko.SPAWN_Y,
     zones: vyhlad_na_rakusko.LEVEL_ZONES,
-    waterZones: optionalModuleField<TileZone[]>(vyhlad_na_rakusko, 'WATER_ZONES') ?? [],
-    bgPreset: optionalModuleField<string>(vyhlad_na_rakusko, 'BG_PRESET'),
-    enemies: optionalModuleField<EnemyPlacement[]>(vyhlad_na_rakusko, 'ENEMIES') ?? [],
+    waterZones: (vyhlad_na_rakusko as any).WATER_ZONES ?? [],
+    bgPreset: (vyhlad_na_rakusko as any).BG_PRESET ?? undefined,
+    bgmPreset: (vyhlad_na_rakusko as any).BGM_PRESET ?? undefined,
+    enemies: (vyhlad_na_rakusko as any).ENEMIES ?? [],
   },
 ];

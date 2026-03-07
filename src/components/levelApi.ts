@@ -8,6 +8,7 @@ export interface LevelInfo {
   zones: { col: number; row: number; w: number; h: number }[];
   waterZones?: { col: number; row: number; w: number; h: number }[];
   bgPreset?: string;
+  bgmPreset?: string;
   enemies?: { type: string; col: number; row: number; damage: number; moving: boolean }[];
 }
 

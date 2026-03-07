@@ -14,11 +14,18 @@ const BG_PRESETS: Record<string, string> = {
   bg: new URL('../assets/bg/bg.png', import.meta.url).href,
   'bg-kedy-pucdej': new URL('../assets/bg/bg-kedy-pucdej.png', import.meta.url).href,
 };
+const BGM_PRESETS: Record<string, string> = {
+  'kedy-pucdej': `${import.meta.env.BASE_URL}music/kedy-pucdej.mp3`,
+  dunaj: `${import.meta.env.BASE_URL}music/Dunaj.mp3`,
+  hlavacikova: `${import.meta.env.BASE_URL}music/Hlavacikova.mp3`,
+};
 const BG_FALLBACK_COLOR = '#334863';
 const tilemapUrl = new URL('../assets/kakoskonia_tilemap.png', import.meta.url).href;
 const idleUrl    = new URL('../assets/steady-sprite.png',      import.meta.url).href;
 const runUrl     = new URL('../assets/run-sprite.png',         import.meta.url).href;
-const jumpUrl    = new URL('../assets/jump-sprite.png',        import.meta.url).href;
+const verticalJumpUrl = new URL('../assets/vertical_jump2.png', import.meta.url).href;
+const forwardJumpUrl = new URL('../assets/forward_jump_sprite.png', import.meta.url).href;
+const fallUrl    = new URL('../assets/fall_sprite.png',        import.meta.url).href;
 const natureUrls = [
   new URL('../assets/nature/grass.png', import.meta.url).href,
   new URL('../assets/nature/flower.png', import.meta.url).href,
@@ -77,6 +84,8 @@ export class Game {
   private tileMap!: TileMap;
 
   private bgImg: HTMLImageElement | null = null;
+  private bgmAudio: HTMLAudioElement | null = null;
+  private bgmUnlocked = false;
   private tilemapImg!: HTMLImageElement;
   private healthBarImg!: HTMLImageElement;
   private natureImgs: HTMLImageElement[] = [];
@@ -128,13 +137,15 @@ export class Game {
     const bgPromise = bgUrlForLevel ? loadImage(bgUrlForLevel).catch(() => null) : Promise.resolve(null);
     const enemyEntries = Object.entries(ENEMY_BY_ID) as [EnemyTypeId, (typeof ENEMY_BY_ID)[EnemyTypeId]][];
 
-    const [bgImg, tilemapImg, healthBarImg, idleCanvas, runCanvas, jumpCanvas, ...restAssets] = await Promise.all([
+    const [bgImg, tilemapImg, healthBarImg, idleCanvas, runCanvas, verticalJumpCanvas, forwardJumpCanvas, fallCanvas, ...restAssets] = await Promise.all([
       bgPromise,
       loadImage(tilemapUrl),
       loadImage(healthBarUrl),
       loadSpriteTransparent(idleUrl),
       loadSpriteTransparent(runUrl),
-      loadSpriteTransparent(jumpUrl),
+      loadSpriteTransparent(verticalJumpUrl),
+      loadSpriteTransparent(forwardJumpUrl),
+      loadSpriteTransparent(fallUrl),
       ...natureUrls.map(loadImage),
       ...enemyEntries.map(([id, enemy]) => loadImage(enemy.spriteUrl).then(img => ({ id, img }))),
     ]);
@@ -160,12 +171,16 @@ export class Game {
 
     // Sprite sheets
     // steady-sprite.png  900 × 450  2 frames  fps 8
-    // run-sprite.png     3031 × 2114  2 frames  fps 12
-    // jump-sprite.png    8134 × 1330  7 frames  fps 10
+    // run-sprite.png           600 × 418 2 frames fps 12
+    // vertical_jump2.png       600 × 418 2 frames fps 10
+    // forward_jump_sprite.png  600 × 418 2 frames fps 10
+    // fall_sprite.png          600 × 418 2 frames fps 10
     this.player.sprites = {
-      idle: makeSheet(idleCanvas, 2,  8),
-      run:  makeSheet(runCanvas,  2, 12),
-      jump: makeSheet(jumpCanvas, 7, 10),
+      idle:         makeSheet(idleCanvas, 2,  8),
+      run:          makeSheet(runCanvas,  2, 12),
+      jumpVertical: makeSheet(verticalJumpCanvas, 2, 10),
+      jumpForward:  makeSheet(forwardJumpCanvas, 2, 10),
+      fall:         makeSheet(fallCanvas, 2, 10),
     };
 
     // Capture collider list on the player (we pass it each update)
@@ -186,6 +201,10 @@ export class Game {
     window.addEventListener('keydown', this.onKeyDown);
     window.addEventListener('keyup',   this.onKeyUp);
     window.addEventListener('resize',  this.resizeCanvas);
+    window.addEventListener('pointerdown', this.onAudioUnlock);
+    window.addEventListener('touchstart', this.onAudioUnlock, { passive: true });
+
+    this.setupBgmForLevel();
   }
 
   private _colliders: import('./types').Rect[] = [];
@@ -194,6 +213,7 @@ export class Game {
   start() {
     this.running  = true;
     this.lastTime = performance.now();
+    this.tryStartBgm();
     this.rafId    = requestAnimationFrame(this.loop);
   }
 
@@ -203,6 +223,9 @@ export class Game {
     window.removeEventListener('keydown', this.onKeyDown);
     window.removeEventListener('keyup',   this.onKeyUp);
     window.removeEventListener('resize',  this.resizeCanvas);
+    window.removeEventListener('pointerdown', this.onAudioUnlock);
+    window.removeEventListener('touchstart', this.onAudioUnlock);
+    this.stopBgm();
   }
 
   private loop = (time: number) => {
@@ -220,6 +243,11 @@ export class Game {
     while (this.accumulator >= FIXED_DT) {
       if (!this.gameOver) {
         this.updateInput();
+        if (!this.bgmUnlocked && this.bgmAudio && (
+          this.input.left || this.input.right || this.input.jump || this.input.dash || this.input.down
+        )) {
+          this.tryStartBgm();
+        }
         this.updateEnemies();
         const enemyColliders = this.enemies.map(enemy => ({ x: enemy.x, y: enemy.y, w: enemy.w, h: enemy.h }));
         this.player.update(this.input, this._colliders.concat(enemyColliders), this._waterRects);
@@ -548,6 +576,7 @@ export class Game {
 
   private onKeyDown = (e: KeyboardEvent) => {
     this.keys[e.key] = true;
+    this.tryStartBgm();
     if ([' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key))
       e.preventDefault();
   };
@@ -555,6 +584,49 @@ export class Game {
   private onKeyUp = (e: KeyboardEvent) => {
     this.keys[e.key] = false;
   };
+
+  private onAudioUnlock = () => {
+    this.tryStartBgm();
+  };
+
+  private setupBgmForLevel() {
+    const preset = this.level.bgmPreset;
+    const bgmUrl = preset ? BGM_PRESETS[preset] : undefined;
+    if (!bgmUrl) {
+      if (preset) console.warn(`[BGM] Unknown preset "${preset}" on level "${this.level.name}"`);
+      return;
+    }
+    console.info(`[BGM] Level "${this.level.name}" preset "${preset}" -> ${bgmUrl}`);
+    const audio = new Audio(bgmUrl);
+    audio.addEventListener('error', () => {
+      console.warn(`[BGM] Failed to load audio from ${bgmUrl}`);
+    });
+    audio.loop = true;
+    audio.volume = 0.5;
+    audio.preload = 'auto';
+    this.bgmAudio = audio;
+    this.bgmUnlocked = false;
+    this.tryStartBgm();
+  }
+
+  private tryStartBgm() {
+    if (!this.running || this.bgmUnlocked || !this.bgmAudio) return;
+    this.bgmAudio.play().then(() => {
+      this.bgmUnlocked = true;
+      window.removeEventListener('pointerdown', this.onAudioUnlock);
+      window.removeEventListener('touchstart', this.onAudioUnlock);
+    }).catch((err) => {
+      console.warn('[BGM] Play blocked/failed:', err);
+    });
+  }
+
+  private stopBgm() {
+    if (!this.bgmAudio) return;
+    this.bgmAudio.pause();
+    this.bgmAudio.currentTime = 0;
+    this.bgmAudio = null;
+    this.bgmUnlocked = false;
+  }
 
   private buildNatureOverlays(): NatureOverlay[] {
     if (this.natureImgs.length === 0) return [];

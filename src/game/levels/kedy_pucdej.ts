@@ -7,6 +7,7 @@ export const TILE_ROWS = 75;
 
 export const SPAWN_X = 2 * TILE_DSP;
 export const SPAWN_Y = 6 * TILE_DSP - 1;
+export const BGM_PRESET = 'kedy-pucdej';
 
 export const LEVEL_ZONES: TileZone[] = [
   z(  0,  0,  57,  1),

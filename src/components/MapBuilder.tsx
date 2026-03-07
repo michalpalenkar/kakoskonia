@@ -82,6 +82,7 @@ function exportLevelData(
   cols: number,
   rows: number,
   bgPreset: string,
+  bgmPreset: string,
 ): string {
   const zones = extractZones(grid, cols, rows);
   const wZones = extractZones(waterGrid, cols, rows);
@@ -106,7 +107,9 @@ function exportLevelData(
     `export const SPAWN_X = ${spawnCol} * TILE_DSP;`,
     `export const SPAWN_Y = ${spawnRow} * TILE_DSP - 1;`,
     ``,
-    ...(bgPreset ? [`export const BG_PRESET = '${bgPreset}';`, ``] : []),
+    ...(bgPreset ? [`export const BG_PRESET = '${bgPreset}';`] : []),
+    ...(bgmPreset ? [`export const BGM_PRESET = '${bgmPreset}';`] : []),
+    ...((bgPreset || bgmPreset) ? [''] : []),
     `export const LEVEL_ZONES: TileZone[] = [`,
     zonesStr,
     `];`,
@@ -161,6 +164,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
   const selectedEnemyRef = useRef<EnemyTypeId>(ENEMY_DEFINITIONS[0].id);
   const [hasPlayer, setHasPlayer] = useState(false);
   const [bgPreset, setBgPreset] = useState<string>('');
+  const [bgmPreset, setBgmPreset] = useState<string>('');
   const [hoveredEnemyInfo, setHoveredEnemyInfo] = useState<{
     screenX: number;
     screenY: number;
@@ -172,6 +176,10 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     { value: '', label: 'None (solid color)' },
     { value: 'bg', label: 'Default' },
     { value: 'bg-kedy-pucdej', label: 'Kedy Pucdej' },
+  ];
+  const BGM_OPTIONS: { value: string; label: string }[] = [
+    { value: '', label: 'None' },
+    { value: 'kedy-pucdej', label: 'Kedy Pucdej music' },
   ];
 
   // File management state
@@ -876,6 +884,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     }
     waterRef.current = newWater;
     setBgPreset(data.bgPreset ?? '');
+    setBgmPreset(data.bgmPreset ?? '');
     enemiesRef.current = (data.enemies ?? [])
       .filter(enemy => ENEMY_BY_ID[enemy.type as EnemyTypeId] != null)
       .map(enemy => ({
@@ -910,6 +919,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     waterRef.current = new Set();
     enemiesRef.current = [];
     setBgPreset('');
+    setBgmPreset('');
     playerRef.current = null;
     setHasPlayer(false);
     const z = Math.min(window.innerWidth / (DEFAULT_COLS * T), window.innerHeight / (DEFAULT_ROWS * T)) * 0.9;
@@ -961,6 +971,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
         colsRef.current,
         rowsRef.current,
         bgPreset,
+        bgmPreset,
       );
       await saveLevel(currentFilename, content);
       showStatus(`Saved ${currentFilename}`);
@@ -986,6 +997,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
         colsRef.current,
         rowsRef.current,
         bgPreset,
+        bgmPreset,
       );
       const filename = await saveAsLevel(saveAsName.trim(), content);
       setCurrentFilename(filename);
@@ -1046,6 +1058,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       waterZones,
       enemies: enemiesRef.current,
       ...(bgPreset ? { bgPreset } : {}),
+      ...(bgmPreset ? { bgmPreset } : {}),
     };
     const encoded = btoa(JSON.stringify(levelData));
     const base = window.location.pathname;
@@ -1204,6 +1217,22 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
             }}
           >
             {BG_OPTIONS.map(o => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ color: '#888', fontSize: 11, fontFamily: 'monospace' }}>BGM</span>
+          <select
+            value={bgmPreset}
+            onChange={e => setBgmPreset(e.target.value)}
+            style={{
+              padding: '4px 8px', background: 'rgba(40,40,60,0.8)',
+              color: '#ccc', border: '1px solid #3a3a55', borderRadius: 6,
+              fontSize: 11, fontFamily: 'monospace', outline: 'none',
+            }}
+          >
+            {BGM_OPTIONS.map(o => (
               <option key={o.value} value={o.value}>{o.label}</option>
             ))}
           </select>

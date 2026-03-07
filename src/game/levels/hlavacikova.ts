@@ -7,6 +7,7 @@ export const TILE_ROWS = 64;
 
 export const SPAWN_X = 47 * TILE_DSP;
 export const SPAWN_Y = 61 * TILE_DSP - 1;
+export const BGM_PRESET = 'hlavacikova';
 
 export const LEVEL_ZONES: TileZone[] = [
   z(  0,  0,  98,  1),

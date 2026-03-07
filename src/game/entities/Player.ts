@@ -14,6 +14,11 @@ const WATER_MAX_FALL = 4;
 const WATER_JUMP_VEL = -10;
 const CROUCH_H = 64;
 const CROUCH_W = 56;
+const FORWARD_JUMP_SPEED_THRESHOLD = 0.8;
+const FALL_LAND_SPLIT = 0.57;
+const VERTICAL_JUMP_SPLIT = 0.5;
+const FORWARD_JUMP_SPLIT = 0.5;
+const FORWARD_JUMP_CROUCH_FRAMES = 3;
 
 export class Player {
   x: number;
@@ -40,6 +45,9 @@ export class Player {
   private dashDir = -1;
   private knockbackFrames = 0;
   private knockbackVx = 0;
+  private airborneFromJump = false;
+  private jumpTakeoffType: 'vertical' | 'forward' | null = null;
+  private forwardJumpCrouchTimer = 0;
   private hitboxW = PLAYER_W;
   private hitboxH = PLAYER_H;
 
@@ -125,17 +133,26 @@ export class Player {
         // In water: only jump when on surface
         if (this.onWaterSurface) {
           this.vy = WATER_JUMP_VEL;
+          this.airborneFromJump = true;
+          this.jumpTakeoffType = Math.abs(this.vx) > FORWARD_JUMP_SPEED_THRESHOLD ? 'forward' : 'vertical';
+          this.forwardJumpCrouchTimer = this.jumpTakeoffType === 'forward' ? FORWARD_JUMP_CROUCH_FRAMES : 0;
           this.jumpBuffer = 0;
         }
       } else if (this.coyoteTimer > 0) {
         // First jump (ground or coyote)
         this.vy = JUMP_VEL;
+        this.airborneFromJump = true;
+        this.jumpTakeoffType = Math.abs(this.vx) > FORWARD_JUMP_SPEED_THRESHOLD ? 'forward' : 'vertical';
+        this.forwardJumpCrouchTimer = this.jumpTakeoffType === 'forward' ? FORWARD_JUMP_CROUCH_FRAMES : 0;
         this.grounded = false;
         this.coyoteTimer = 0;
         this.jumpBuffer = 0;
       } else if (this.doubleJumpAvailable) {
         // Double jump: triggered by a fresh press while in the air
         this.vy = DOUBLE_JUMP_VEL;
+        this.airborneFromJump = true;
+        this.jumpTakeoffType = Math.abs(this.vx) > FORWARD_JUMP_SPEED_THRESHOLD ? 'forward' : 'vertical';
+        this.forwardJumpCrouchTimer = this.jumpTakeoffType === 'forward' ? FORWARD_JUMP_CROUCH_FRAMES : 0;
         this.doubleJumpAvailable = false;
         this.jumpBuffer = 0;
       }
@@ -174,13 +191,25 @@ export class Player {
       this.vy = Math.min(this.vy + 0.6, MAX_FALL);
     }
 
+    const wasGrounded = this.grounded;
+    const wasFalling = this.vy > 0;
+
     // ── Collision resolution ───────────────────────────────────────────────
     this.resolveCollisions(colliders);
+    const justLanded = !wasGrounded && this.grounded && wasFalling;
+    const landedFromJump = justLanded && this.airborneFromJump;
 
     // ── Animation state machine ────────────────────────────────────────────
-    const newState: AnimState = !this.grounded
-      ? (this.vy < 0 ? 'jump' : 'fall')
-      : (Math.abs(this.vx) > 0.1 ? 'run' : 'idle');
+    let newState: AnimState;
+    if (landedFromJump) {
+      newState = 'land';
+    } else if (!this.grounded) {
+      newState = this.vy < 0 ? 'jump' : 'fall';
+    } else if (this.animState === 'land') {
+      newState = 'land';
+    } else {
+      newState = Math.abs(this.vx) > 0.1 ? 'run' : 'idle';
+    }
 
     if (newState !== this.animState) {
       this.animState = newState;
@@ -188,22 +217,58 @@ export class Player {
       this.animTimer = 0;
     }
 
+    if (this.grounded && this.animState !== 'land') {
+      this.airborneFromJump = false;
+      this.jumpTakeoffType = null;
+      this.forwardJumpCrouchTimer = 0;
+    }
+
     // ── Advance animation frame ────────────────────────────────────────────
-    const spriteKey = this.animState === 'fall' ? 'jump' : this.animState;
+    const spriteKey = this.getSpriteKeyForAnim();
     const sheet = this.sprites[spriteKey];
     if (sheet) {
+      if (this.animFrame >= sheet.frames) this.animFrame = this.animFrame % sheet.frames;
       this.animTimer++;
       const interval = Math.max(1, Math.round(60 / sheet.fps));
       if (this.animTimer >= interval) {
         this.animTimer = 0;
         if (this.animState === 'fall') {
-          // Hold in the latter half of the jump sheet
-          const fallStart = Math.floor(sheet.frames * 0.57);
-          const fallEnd = Math.max(fallStart, sheet.frames - 2);
-          this.animFrame = Math.min(this.animFrame + 1, fallEnd);
-          if (this.animFrame < fallStart) this.animFrame = fallStart;
+          if (spriteKey === 'jumpVertical') {
+            // Vertical jump descending phase: second part of vertical_jump sequence.
+            const split = this.getVerticalJumpSplit(sheet.frames);
+            if (this.animFrame < split) this.animFrame = split;
+            else this.animFrame = Math.min(this.animFrame + 1, Math.max(0, sheet.frames - 1));
+          } else {
+            // In-air falling uses the first sequence only.
+            const split = this.getFallLandSplit(sheet.frames);
+            const fallEnd = Math.max(0, split - 1);
+            this.animFrame = Math.min(this.animFrame + 1, fallEnd);
+          }
+        } else if (this.animState === 'jump' && spriteKey === 'jumpVertical') {
+          // Vertical jump rising phase: first part only.
+          const split = this.getVerticalJumpSplit(sheet.frames);
+          const riseEnd = Math.max(0, split - 1);
+          this.animFrame = Math.min(this.animFrame + 1, riseEnd);
+        } else if (this.animState === 'jump' && spriteKey === 'jumpForward') {
+          // Forward jump rising phase:
+          // brief crouch (first phase) only right after jump press, then second phase.
+          const split = this.getForwardJumpSplit(sheet.frames);
+          const glideFrame = Math.min(split, Math.max(0, sheet.frames - 1));
+          if (this.forwardJumpCrouchTimer > 0) {
+            this.forwardJumpCrouchTimer--;
+            this.animFrame = 0;
+          } else {
+            this.animFrame = glideFrame;
+          }
+        } else if (this.animState === 'land') {
+          // Landing crouch uses the second sequence only, once.
+          const split = this.getFallLandSplit(sheet.frames);
+          const landStart = Math.min(split, Math.max(0, sheet.frames - 1));
+          if (this.animFrame < landStart) this.animFrame = landStart;
+          else if (this.animFrame < sheet.frames - 1) this.animFrame++;
+          else this.animState = Math.abs(this.vx) > 0.1 ? 'run' : 'idle';
         } else {
-          // Loop: idle and run both cycle all frames continuously
+          // Loop: idle/run/jump cycle all frames continuously.
           this.animFrame = (this.animFrame + 1) % sheet.frames;
         }
       }
@@ -331,7 +396,7 @@ export class Player {
   }
 
   draw(ctx: CanvasRenderingContext2D, camX: number, camY: number) {
-    const spriteKey = this.animState === 'fall' ? 'jump' : this.animState;
+    const spriteKey = this.getSpriteKeyForAnim();
     const sheet = this.sprites[spriteKey];
 
     if (!sheet) {
@@ -340,14 +405,25 @@ export class Player {
       return;
     }
 
-    let frame = this.animFrame;
+    let frame = this.animFrame % Math.max(1, sheet.frames);
     if (this.animState === 'fall') {
-      frame = Math.max(Math.floor(sheet.frames * 0.6), frame);
-      frame = Math.min(frame, Math.max(0, sheet.frames - 2));
+      if (spriteKey === 'jumpVertical') {
+        frame = Math.max(this.getVerticalJumpSplit(sheet.frames), frame);
+      } else {
+        frame = Math.min(frame, Math.max(0, this.getFallLandSplit(sheet.frames) - 1));
+      }
+    } else if (this.animState === 'jump' && spriteKey === 'jumpVertical') {
+      frame = Math.min(frame, Math.max(0, this.getVerticalJumpSplit(sheet.frames) - 1));
+    } else if (this.animState === 'jump' && spriteKey === 'jumpForward') {
+      const split = this.getForwardJumpSplit(sheet.frames);
+      frame = this.forwardJumpCrouchTimer > 0 ? 0 : Math.min(split, Math.max(0, sheet.frames - 1));
+    } else if (this.animState === 'land') {
+      frame = Math.max(this.getFallLandSplit(sheet.frames), frame);
+      frame = Math.min(frame, Math.max(0, sheet.frames - 1));
     }
 
     const sx = frame * sheet.frameW;
-    const jumpSizeMul = spriteKey === 'jump' ? 1.3 : 1;
+    const jumpSizeMul = (spriteKey === 'jumpVertical' || spriteKey === 'jumpForward' || spriteKey === 'fall') ? 1.3 : 1;
     const drawH = PLAYER_DRAW_H * jumpSizeMul;
     const scale = drawH / sheet.frameH;
     const dw = sheet.frameW * scale;
@@ -375,6 +451,9 @@ export class Player {
     this.knockbackVx = direction * Math.abs(horizontalSpeed);
     this.knockbackFrames = Math.max(1, Math.floor(frames));
     this.vy = verticalSpeed;
+    this.airborneFromJump = false;
+    this.jumpTakeoffType = null;
+    this.forwardJumpCrouchTimer = 0;
     this.grounded = false;
   }
 
@@ -384,5 +463,27 @@ export class Player {
 
   getHitboxHeight() {
     return this.hitboxH;
+  }
+
+  private getSpriteKeyForAnim(): string {
+    if (this.animState === 'land') return 'fall';
+    if (this.animState === 'jump') return 'jumpForward';
+    if (this.animState === 'fall') return 'fall';
+    return this.animState;
+  }
+
+  private getFallLandSplit(frames: number): number {
+    if (frames <= 1) return 0;
+    return Math.max(1, Math.min(frames - 1, Math.floor(frames * FALL_LAND_SPLIT)));
+  }
+
+  private getVerticalJumpSplit(frames: number): number {
+    if (frames <= 1) return 0;
+    return Math.max(1, Math.min(frames - 1, Math.floor(frames * VERTICAL_JUMP_SPLIT)));
+  }
+
+  private getForwardJumpSplit(frames: number): number {
+    if (frames <= 1) return 0;
+    return Math.max(1, Math.min(frames - 1, Math.floor(frames * FORWARD_JUMP_SPLIT)));
   }
 }
