@@ -19,6 +19,8 @@ const FALL_LAND_SPLIT = 0.57;
 const VERTICAL_JUMP_SPLIT = 0.5;
 const FORWARD_JUMP_SPLIT = 0.5;
 const FORWARD_JUMP_CROUCH_FRAMES = 3;
+const LEDGE_ANIM_FRAMES = 11;
+const LEDGE_SPRITE_FACES_LEFT = false;
 
 export class Player {
   x: number;
@@ -50,6 +52,8 @@ export class Player {
   private forwardJumpCrouchTimer = 0;
   private hitboxW = PLAYER_W;
   private hitboxH = PLAYER_H;
+  private ledgeTimer = 0;
+  private ledgeTarget: { x: number; y: number } | null = null;
 
   sprites: Partial<Record<string, SpriteSheet>> = {};
 
@@ -59,6 +63,32 @@ export class Player {
   }
 
   update(input: InputState, colliders: Rect[], waterRects: Rect[] = []) {
+    if (this.ledgeTimer > 0) {
+      this.ledgeTimer--;
+      this.vx = 0;
+      this.vy = 0;
+      this.grounded = false;
+      if (this.animState !== 'ledge') {
+        this.animState = 'ledge';
+        this.animFrame = 0;
+        this.animTimer = 0;
+      }
+      this.updateLedgeFrame();
+      if (this.ledgeTimer <= 0 && this.ledgeTarget) {
+        this.x = this.ledgeTarget.x;
+        this.y = this.ledgeTarget.y;
+        this.ledgeTarget = null;
+        this.grounded = true;
+        this.airborneFromJump = false;
+        this.jumpTakeoffType = null;
+        this.forwardJumpCrouchTimer = 0;
+        this.animState = 'idle';
+        this.animFrame = 0;
+        this.animTimer = 0;
+      }
+      return;
+    }
+
     this.updateCrouchState(colliders);
 
     // ── Water detection ─────────────────────────────────────────────────────
@@ -195,7 +225,7 @@ export class Player {
     const wasFalling = this.vy > 0;
 
     // ── Collision resolution ───────────────────────────────────────────────
-    this.resolveCollisions(colliders);
+    this.resolveCollisions(colliders, input);
     const justLanded = !wasGrounded && this.grounded && wasFalling;
     const landedFromJump = justLanded && this.airborneFromJump;
 
@@ -275,14 +305,14 @@ export class Player {
     }
   }
 
-  private resolveCollisions(colliders: Rect[]) {
+  private resolveCollisions(colliders: Rect[], input: InputState) {
     let usedLedgeAssist = false;
 
     // ── X ──────────────────────────────────────────────────────────────────
     this.x += this.vx;
     for (const r of colliders) {
       if (!this.overlaps(r)) continue;
-      if (this.tryLedgeAssist(r, colliders)) {
+      if (this.tryLedgeAssist(r, colliders, input)) {
         usedLedgeAssist = true;
         break;
       }
@@ -293,7 +323,6 @@ export class Player {
     }
 
     if (usedLedgeAssist) {
-      this.grounded = true;
       this.vy = 0;
       return;
     }
@@ -331,9 +360,20 @@ export class Player {
     );
   }
 
-  private tryLedgeAssist(hit: Rect, colliders: Rect[]): boolean {
+  private tryLedgeAssist(hit: Rect, colliders: Rect[], input: InputState): boolean {
     if (this.vx === 0) return false;
+    if (this.grounded) return false;
+    if (!this.airborneFromJump) return false;
     if (this.vy > 6) return false; // too fast downward -> do not auto-climb
+
+    const climbDir = this.vx > 0 ? 1 : -1;
+    if ((climbDir > 0 && !input.right) || (climbDir < 0 && !input.left)) return false;
+
+    // Only allow ledge grab when jump is not high enough to cleanly overfly the top.
+    const targetY = hit.y - this.hitboxH;
+    if (this.y <= targetY + 2) return false;
+    // If still strongly rising, keep normal jump arc instead of forcing ledge.
+    if (this.vy < -1.8) return false;
 
     const playerBottom = this.y + this.hitboxH;
     const topDelta = playerBottom - hit.y;
@@ -341,10 +381,20 @@ export class Player {
     // Must be near the top edge of the obstacle.
     if (topDelta < -LEDGE_ASSIST_DOWN_PX || topDelta > LEDGE_ASSIST_UP_PX) return false;
 
-    const targetY = hit.y - this.hitboxH;
-    if (!this.canStandAt(this.x, targetY, colliders, hit)) return false;
+    const edgeInset = 4;
+    const targetX = climbDir > 0
+      ? hit.x + edgeInset
+      : hit.x + hit.w - this.hitboxW - edgeInset;
+    if (!this.canStandAt(targetX, targetY, colliders, hit)) return false;
 
-    this.y = targetY;
+    this.ledgeTarget = { x: targetX, y: targetY };
+    this.ledgeTimer = LEDGE_ANIM_FRAMES;
+    this.vx = 0;
+    this.vy = 0;
+    this.facingLeft = climbDir < 0;
+    this.animState = 'ledge';
+    this.animFrame = 0;
+    this.animTimer = 0;
     return true;
   }
 
@@ -412,6 +462,8 @@ export class Player {
       } else {
         frame = Math.min(frame, Math.max(0, this.getFallLandSplit(sheet.frames) - 1));
       }
+    } else if (this.animState === 'ledge') {
+      frame = Math.min(frame, Math.max(0, sheet.frames - 1));
     } else if (this.animState === 'jump' && spriteKey === 'jumpVertical') {
       frame = Math.min(frame, Math.max(0, this.getVerticalJumpSplit(sheet.frames) - 1));
     } else if (this.animState === 'jump' && spriteKey === 'jumpForward') {
@@ -423,26 +475,35 @@ export class Player {
     }
 
     const sx = frame * sheet.frameW;
-    const jumpSizeMul = (spriteKey === 'jumpVertical' || spriteKey === 'jumpForward' || spriteKey === 'fall') ? 1.3 : 1;
-    const drawH = PLAYER_DRAW_H * jumpSizeMul;
+    const sizeMul = spriteKey === 'ledge'
+      ? 1.2
+      : (spriteKey === 'jumpVertical' || spriteKey === 'jumpForward' || spriteKey === 'fall') ? 1.3 : 1;
+    const drawH = PLAYER_DRAW_H * sizeMul;
     const scale = drawH / sheet.frameH;
     const dw = sheet.frameW * scale;
     const dh = drawH;
     const screenX = this.x - camX;
-    const screenY = this.y - camY - (drawH - this.hitboxH);
+    const topOffset = spriteKey === 'ledge' ? drawH * -0.14 : 0;
+    const screenY = this.y - camY - (drawH - this.hitboxH) - topOffset;
+    const ledgeOffsetX = spriteKey === 'ledge' ? (this.facingLeft ? -dw * 0.2 : dw * 0.2) : 0;
+    const centerX = screenX + this.hitboxW / 2 + ledgeOffsetX;
 
-    // Sprites face LEFT by default — flip when facing right
+    // Most sprites face LEFT by default.
+    // Ledge sprite has its own authored facing direction.
+    const spriteFacesLeft = spriteKey === 'ledge' ? LEDGE_SPRITE_FACES_LEFT : true;
+    const shouldFlip = spriteFacesLeft ? !this.facingLeft : this.facingLeft;
+
     ctx.save();
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
-    if (!this.facingLeft) {
-      ctx.translate(screenX + this.hitboxW / 2, screenY);
+    if (shouldFlip) {
+      ctx.translate(centerX, screenY);
       ctx.scale(-1, 1);
       ctx.drawImage(sheet.canvas, sx, 0, sheet.frameW, sheet.frameH,
         -dw / 2, 0, dw, dh);
     } else {
       ctx.drawImage(sheet.canvas, sx, 0, sheet.frameW, sheet.frameH,
-        screenX + this.hitboxW / 2 - dw / 2, screenY, dw, dh);
+        centerX - dw / 2, screenY, dw, dh);
     }
     ctx.restore();
   }
@@ -466,10 +527,18 @@ export class Player {
   }
 
   private getSpriteKeyForAnim(): string {
+    if (this.animState === 'ledge') return 'ledge';
     if (this.animState === 'land') return 'fall';
     if (this.animState === 'jump') return 'jumpForward';
     if (this.animState === 'fall') return 'fall';
     return this.animState;
+  }
+
+  private updateLedgeFrame() {
+    const sheet = this.sprites.ledge;
+    if (!sheet) return;
+    const half = Math.ceil(LEDGE_ANIM_FRAMES / 2);
+    this.animFrame = this.ledgeTimer > half ? 0 : Math.min(1, sheet.frames - 1);
   }
 
   private getFallLandSplit(frames: number): number {

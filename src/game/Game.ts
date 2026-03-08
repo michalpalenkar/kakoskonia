@@ -28,6 +28,7 @@ const runUrl     = new URL('../assets/run-sprite.png',         import.meta.url).
 const verticalJumpUrl = new URL('../assets/vertical_jump2.png', import.meta.url).href;
 const forwardJumpUrl = new URL('../assets/forward_jump_sprite.png', import.meta.url).href;
 const fallUrl    = new URL('../assets/fall_sprite.png',        import.meta.url).href;
+const ledgeUrl   = new URL('../assets/ledge-sprite.png',       import.meta.url).href;
 
 /** Camera zoom — 1.25× makes the player appear 25% larger */
 const ZOOM = 1.25;
@@ -131,7 +132,7 @@ export class Game {
     const enemyEntries = Object.entries(ENEMY_BY_ID) as [EnemyTypeId, (typeof ENEMY_BY_ID)[EnemyTypeId]][];
     const elementAssets = ELEMENT_ASSETS;
 
-    const [bgImg, tilemapImg, healthBarImg, idleCanvas, runCanvas, verticalJumpCanvas, forwardJumpCanvas, fallCanvas, ...restAssets] = await Promise.all([
+    const [bgImg, tilemapImg, healthBarImg, idleCanvas, runCanvas, verticalJumpCanvas, forwardJumpCanvas, fallCanvas, ledgeCanvas, ...restAssets] = await Promise.all([
       bgPromise,
       loadImage(tilemapUrl),
       loadImage(healthBarUrl),
@@ -140,6 +141,7 @@ export class Game {
       loadSpriteTransparent(verticalJumpUrl),
       loadSpriteTransparent(forwardJumpUrl),
       loadSpriteTransparent(fallUrl),
+      loadSpriteTransparent(ledgeUrl),
       ...enemyEntries.map(([id, enemy]) => loadImage(enemy.spriteUrl).then(img => ({ id, img }))),
       ...elementAssets.map(asset => loadImage(asset.url).then(img => ({ id: asset.id, img }))),
     ]);
@@ -172,12 +174,14 @@ export class Game {
     // vertical_jump2.png       600 × 418 2 frames fps 10
     // forward_jump_sprite.png  600 × 418 2 frames fps 10
     // fall_sprite.png          600 × 418 2 frames fps 10
+    // ledge-sprite.png         single frame
     this.player.sprites = {
       idle:         makeSheet(idleCanvas, 2,  8),
       run:          makeSheet(runCanvas,  2, 12),
       jumpVertical: makeSheet(verticalJumpCanvas, 2, 10),
       jumpForward:  makeSheet(forwardJumpCanvas, 2, 10),
       fall:         makeSheet(fallCanvas, 2, 10),
+      ledge:        makeSheet(ledgeCanvas, 1, 10),
     };
 
     // Capture collider list on the player (we pass it each update)
