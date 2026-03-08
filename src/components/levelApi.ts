@@ -10,6 +10,7 @@ export interface LevelInfo {
   bgPreset?: string;
   bgmPreset?: string;
   enemies?: { type: string; col: number; row: number; damage: number; moving: boolean }[];
+  elements?: { id: string; col: number; row: number }[];
 }
 
 export async function listLevels(): Promise<LevelInfo[]> {

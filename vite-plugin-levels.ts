@@ -59,6 +59,22 @@ function parseEnemiesBlock(content: string): { type: string; col: number; row: n
   return enemies;
 }
 
+function parseElementsBlock(content: string): { id: string; col: number; row: number }[] {
+  const block = extractArrayBlock(content, 'ELEMENTS');
+  if (!block) return [];
+  const elements: { id: string; col: number; row: number }[] = [];
+  const elementRegex = /el\(\s*'([^']+)'\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/g;
+  let m: RegExpExecArray | null = null;
+  while ((m = elementRegex.exec(block)) !== null) {
+    elements.push({
+      id: m[1],
+      col: +m[2],
+      row: +m[3],
+    });
+  }
+  return elements;
+}
+
 function parseLevelFile(filename: string): {
   name: string;
   cols: number;
@@ -70,6 +86,7 @@ function parseLevelFile(filename: string): {
   bgPreset?: string;
   bgmPreset?: string;
   enemies?: { type: string; col: number; row: number; damage: number; moving: boolean }[];
+  elements?: { id: string; col: number; row: number }[];
 } | null {
   const filepath = join(LEVELS_DIR, `${filename}.ts`);
   if (!existsSync(filepath)) return null;
@@ -85,6 +102,7 @@ function parseLevelFile(filename: string): {
   const zones = parseZoneBlock(content, 'LEVEL_ZONES');
   const waterZones = parseZoneBlock(content, 'WATER_ZONES');
   const enemies = parseEnemiesBlock(content);
+  const elements = parseElementsBlock(content);
   const bgPresetMatch = content.match(/BG_PRESET\s*=\s*'([^']+)'/);
   const bgmPresetMatch = content.match(/BGM_PRESET\s*=\s*'([^']+)'/);
 
@@ -99,6 +117,7 @@ function parseLevelFile(filename: string): {
     ...(bgPresetMatch ? { bgPreset: bgPresetMatch[1] } : {}),
     ...(bgmPresetMatch ? { bgmPreset: bgmPresetMatch[1] } : {}),
     ...(enemies.length ? { enemies } : {}),
+    ...(elements.length ? { elements } : {}),
   };
 }
 
@@ -108,12 +127,12 @@ function rebuildIndex() {
   const entries = files
     .map((f, i) => {
       const displayName = f.replace(/([a-z])(\d)/g, '$1 $2').replace(/^./, s => s.toUpperCase()).replace(/_/g, ' ');
-      return `  {\n    id: ${i + 1},\n    name: '${displayName}',\n    cols: ${f}.TILE_COLS,\n    rows: ${f}.TILE_ROWS,\n    spawnX: ${f}.SPAWN_X,\n    spawnY: ${f}.SPAWN_Y,\n    zones: ${f}.LEVEL_ZONES,\n    waterZones: (${f} as any).WATER_ZONES ?? [],\n    bgPreset: (${f} as any).BG_PRESET ?? undefined,\n    bgmPreset: (${f} as any).BGM_PRESET ?? undefined,\n    enemies: (${f} as any).ENEMIES ?? [],\n  },`;
+      return `  {\n    id: ${i + 1},\n    name: '${displayName}',\n    cols: ${f}.TILE_COLS,\n    rows: ${f}.TILE_ROWS,\n    spawnX: ${f}.SPAWN_X,\n    spawnY: ${f}.SPAWN_Y,\n    zones: ${f}.LEVEL_ZONES,\n    waterZones: (${f} as any).WATER_ZONES ?? [],\n    bgPreset: (${f} as any).BG_PRESET ?? undefined,\n    bgmPreset: (${f} as any).BGM_PRESET ?? undefined,\n    enemies: (${f} as any).ENEMIES ?? [],\n    elements: (${f} as any).ELEMENTS ?? [],\n  },`;
     })
     .join('\n');
 
   const content = `import type { TileZone } from '../TileMap';
-import type { EnemyPlacement } from './levelTools';
+import type { EnemyPlacement, LevelElement } from './levelTools';
 ${imports}
 
 export interface LevelData {
@@ -128,6 +147,7 @@ export interface LevelData {
   bgPreset?: string;
   bgmPreset?: string;
   enemies?: EnemyPlacement[];
+  elements?: LevelElement[];
 }
 
 export const LEVELS: LevelData[] = [

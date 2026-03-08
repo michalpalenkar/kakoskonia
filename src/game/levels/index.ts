@@ -1,6 +1,7 @@
 import type { TileZone } from '../TileMap';
-import type { EnemyPlacement } from './levelTools';
+import type { EnemyPlacement, LevelElement } from './levelTools';
 import * as dunaj from './dunaj';
+import * as evin_level from './evin_level';
 import * as hlavacikova from './hlavacikova';
 import * as kedy_pucdej from './kedy_pucdej';
 import * as tami_level_backup from './tami_level_backup';
@@ -18,6 +19,7 @@ export interface LevelData {
   bgPreset?: string;
   bgmPreset?: string;
   enemies?: EnemyPlacement[];
+  elements?: LevelElement[];
 }
 
 export const LEVELS: LevelData[] = [
@@ -33,9 +35,24 @@ export const LEVELS: LevelData[] = [
     bgPreset: (dunaj as any).BG_PRESET ?? undefined,
     bgmPreset: (dunaj as any).BGM_PRESET ?? undefined,
     enemies: (dunaj as any).ENEMIES ?? [],
+    elements: (dunaj as any).ELEMENTS ?? [],
   },
   {
     id: 2,
+    name: 'Evin level',
+    cols: evin_level.TILE_COLS,
+    rows: evin_level.TILE_ROWS,
+    spawnX: evin_level.SPAWN_X,
+    spawnY: evin_level.SPAWN_Y,
+    zones: evin_level.LEVEL_ZONES,
+    waterZones: (evin_level as any).WATER_ZONES ?? [],
+    bgPreset: (evin_level as any).BG_PRESET ?? undefined,
+    bgmPreset: (evin_level as any).BGM_PRESET ?? undefined,
+    enemies: (evin_level as any).ENEMIES ?? [],
+    elements: (evin_level as any).ELEMENTS ?? [],
+  },
+  {
+    id: 3,
     name: 'Hlavacikova',
     cols: hlavacikova.TILE_COLS,
     rows: hlavacikova.TILE_ROWS,
@@ -46,9 +63,10 @@ export const LEVELS: LevelData[] = [
     bgPreset: (hlavacikova as any).BG_PRESET ?? undefined,
     bgmPreset: (hlavacikova as any).BGM_PRESET ?? undefined,
     enemies: (hlavacikova as any).ENEMIES ?? [],
+    elements: (hlavacikova as any).ELEMENTS ?? [],
   },
   {
-    id: 3,
+    id: 4,
     name: 'Kedy pucdej',
     cols: kedy_pucdej.TILE_COLS,
     rows: kedy_pucdej.TILE_ROWS,
@@ -59,9 +77,10 @@ export const LEVELS: LevelData[] = [
     bgPreset: (kedy_pucdej as any).BG_PRESET ?? undefined,
     bgmPreset: (kedy_pucdej as any).BGM_PRESET ?? undefined,
     enemies: (kedy_pucdej as any).ENEMIES ?? [],
+    elements: (kedy_pucdej as any).ELEMENTS ?? [],
   },
   {
-    id: 4,
+    id: 5,
     name: 'Tami level backup',
     cols: tami_level_backup.TILE_COLS,
     rows: tami_level_backup.TILE_ROWS,
@@ -72,9 +91,10 @@ export const LEVELS: LevelData[] = [
     bgPreset: (tami_level_backup as any).BG_PRESET ?? undefined,
     bgmPreset: (tami_level_backup as any).BGM_PRESET ?? undefined,
     enemies: (tami_level_backup as any).ENEMIES ?? [],
+    elements: (tami_level_backup as any).ELEMENTS ?? [],
   },
   {
-    id: 5,
+    id: 6,
     name: 'Vyhlad na rakusko',
     cols: vyhlad_na_rakusko.TILE_COLS,
     rows: vyhlad_na_rakusko.TILE_ROWS,
@@ -85,5 +105,6 @@ export const LEVELS: LevelData[] = [
     bgPreset: (vyhlad_na_rakusko as any).BG_PRESET ?? undefined,
     bgmPreset: (vyhlad_na_rakusko as any).BGM_PRESET ?? undefined,
     enemies: (vyhlad_na_rakusko as any).ENEMIES ?? [],
+    elements: (vyhlad_na_rakusko as any).ELEMENTS ?? [],
   },
 ];

@@ -6,6 +6,7 @@ import {
   type EnemyTypeId,
   type EnemyDefinition,
 } from '../game/enemyDefinitions';
+import { ELEMENT_ASSETS } from '../game/elementDefinitions';
 import {
   listLevels, loadLevel, saveLevel, saveAsLevel, deleteLevel,
   generateRandomLevel, type LevelInfo,
@@ -20,8 +21,27 @@ const PINCH_DEADZONE = 0.02;
 
 const tilemapUrl = new URL('../assets/kakoskonia_tilemap.png', import.meta.url).href;
 
-type Tool = 'tile' | 'player' | 'water' | 'enemy';
+type Tool = 'tile' | 'player' | 'water' | 'enemy' | 'element';
 type EnemyPlacement = { type: EnemyTypeId; col: number; row: number; damage: number; moving: boolean };
+type ElementPlacement = { id: string; col: number; row: number };
+type ElementDefinition = {
+  id: string;
+  label: string;
+  filename: string;
+  url: string;
+  widthPx: number;
+  heightPx: number;
+  ratioW: number;
+  ratioH: number;
+  tilesW: number;
+  tilesH: number;
+};
+
+function formatRatio(value: number): string {
+  const roundedInt = Math.round(value);
+  if (Math.abs(value - roundedInt) < 1e-6) return String(roundedInt);
+  return value.toFixed(2).replace(/\.?0+$/, '');
+}
 type EnemyOverrideState = {
   index: number;
   damage: string;
@@ -79,6 +99,7 @@ function exportLevelData(
   waterGrid: Set<string>,
   playerPos: { col: number; row: number } | null,
   enemies: EnemyPlacement[],
+  elements: ElementPlacement[],
   cols: number,
   rows: number,
   bgPreset: string,
@@ -98,8 +119,8 @@ function exportLevelData(
 
   const lines = [
     `import { TILE_DSP } from '../AutoTile';`,
-    `import { z, e } from './levelTools';`,
-    `import type { TileZone, EnemyPlacement } from './levelTools';`,
+    `import { z, e, el } from './levelTools';`,
+    `import type { TileZone, EnemyPlacement, LevelElement } from './levelTools';`,
     ``,
     `export const TILE_COLS = ${cols};`,
     `export const TILE_ROWS = ${rows};`,
@@ -139,6 +160,18 @@ function exportLevelData(
     );
   }
 
+  if (elements.length > 0) {
+    const elementStr = elements
+      .map(element => `  el('${element.id}', ${pad(element.col, 3)}, ${pad(element.row, 2)}),`)
+      .join('\n');
+    lines.push(
+      ``,
+      `export const ELEMENTS: LevelElement[] = [`,
+      elementStr,
+      `];`,
+    );
+  }
+
   return lines.join('\n');
 }
 
@@ -155,13 +188,18 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
   const waterRef = useRef<Set<string>>(new Set());
   const playerRef = useRef<{ col: number; row: number } | null>(null);
   const enemiesRef = useRef<EnemyPlacement[]>([]);
+  const elementsRef = useRef<ElementPlacement[]>([]);
   const enemyImagesRef = useRef<Record<EnemyTypeId, HTMLImageElement>>({} as Record<EnemyTypeId, HTMLImageElement>);
+  const elementImagesRef = useRef<Record<string, HTMLImageElement>>({});
   const camRef = useRef({ panX: -T, panY: -T, zoom: 1 });
 
   const [tool, setTool] = useState<Tool>('tile');
   const toolRef = useRef<Tool>('tile');
   const [selectedEnemyType, setSelectedEnemyType] = useState<EnemyTypeId>(ENEMY_DEFINITIONS[0].id);
   const selectedEnemyRef = useRef<EnemyTypeId>(ENEMY_DEFINITIONS[0].id);
+  const [elementDefs, setElementDefs] = useState<ElementDefinition[]>([]);
+  const [selectedElementId, setSelectedElementId] = useState<string>('');
+  const selectedElementRef = useRef<string>('');
   const [hasPlayer, setHasPlayer] = useState(false);
   const [bgPreset, setBgPreset] = useState<string>('');
   const [bgmPreset, setBgmPreset] = useState<string>('');
@@ -176,10 +214,13 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     { value: '', label: 'None (solid color)' },
     { value: 'bg', label: 'Default' },
     { value: 'bg-kedy-pucdej', label: 'Kedy Pucdej' },
+    { value: 'bg-kedy-pucdej-watercolor', label: 'Kedy Pucdej Watercolor' },
   ];
   const BGM_OPTIONS: { value: string; label: string }[] = [
     { value: '', label: 'None' },
     { value: 'kedy-pucdej', label: 'Kedy Pucdej music' },
+    { value: 'dunaj', label: 'Dunaj' },
+    { value: 'hlavacikova', label: 'Hlavacikova' },
   ];
 
   // File management state
@@ -273,6 +314,56 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     }
     return true;
   }, []);
+  const getElementAt = useCallback((col: number, row: number): number => {
+    for (let i = elementsRef.current.length - 1; i >= 0; i--) {
+      const placed = elementsRef.current[i];
+      const def = elementDefs.find(d => d.id === placed.id);
+      if (!def) continue;
+      if (col >= placed.col && col < placed.col + def.tilesW && row >= placed.row && row < placed.row + def.tilesH) {
+        return i;
+      }
+    }
+    return -1;
+  }, [elementDefs]);
+  const canPlaceElement = useCallback((def: ElementDefinition, col: number, row: number, ignoreIndex = -1): boolean => {
+    const mapCols = colsRef.current;
+    const mapRows = rowsRef.current;
+    if (col < 0 || row < 0 || col + def.tilesW > mapCols || row + def.tilesH > mapRows) return false;
+
+    for (let r = row; r < row + def.tilesH; r++) {
+      for (let c = col; c < col + def.tilesW; c++) {
+        if (gridRef.current.has(key(c, r)) || waterRef.current.has(key(c, r))) return false;
+        const player = playerRef.current;
+        if (player && player.col === c && player.row === r) return false;
+      }
+    }
+
+    for (let i = 0; i < enemiesRef.current.length; i++) {
+      const enemy = enemiesRef.current[i];
+      const enemyDef = ENEMY_BY_ID[enemy.type];
+      const overlap =
+        col < enemy.col + enemyDef.tilesW &&
+        col + def.tilesW > enemy.col &&
+        row < enemy.row + enemyDef.tilesH &&
+        row + def.tilesH > enemy.row;
+      if (overlap) return false;
+    }
+
+    for (let i = 0; i < elementsRef.current.length; i++) {
+      if (i === ignoreIndex) continue;
+      const placed = elementsRef.current[i];
+      const placedDef = elementDefs.find(d => d.id === placed.id);
+      if (!placedDef) continue;
+      const overlap =
+        col < placed.col + placedDef.tilesW &&
+        col + def.tilesW > placed.col &&
+        row < placed.row + placedDef.tilesH &&
+        row + def.tilesH > placed.row;
+      if (overlap) return false;
+    }
+
+    return true;
+  }, [elementDefs]);
 
   const canvasRect = () => canvasRef.current!.getBoundingClientRect();
 
@@ -342,11 +433,23 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     }
     enemiesRef.current = nextEnemies;
 
+    const nextElements: ElementPlacement[] = [];
+    for (let i = 0; i < elementsRef.current.length; i++) {
+      const element = elementsRef.current[i];
+      const def = elementDefs.find(d => d.id === element.id);
+      if (!def) continue;
+      if (element.col < 0 || element.row < 0) continue;
+      if (element.col + def.tilesW > safeCols || element.row + def.tilesH > safeRows) continue;
+      if (!canPlaceElement(def, element.col, element.row, i)) continue;
+      nextElements.push(element);
+    }
+    elementsRef.current = nextElements;
+
     colsRef.current = safeCols;
     rowsRef.current = safeRows;
     setCols(safeCols);
     setRows(safeRows);
-  }, []);
+  }, [canPlaceElement, elementDefs]);
 
   // ── render ────────────────────────────────────────────────────────────────
 
@@ -448,6 +551,27 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       }
     }
 
+    // elements
+    for (let i = 0; i < elementsRef.current.length; i++) {
+      const element = elementsRef.current[i];
+      const def = elementDefs.find(d => d.id === element.id);
+      if (!def) continue;
+      const ex = element.col * T - panX;
+      const ey = element.row * T - panY;
+      const ew = def.ratioW * T;
+      const eh = def.ratioH * T;
+      const img = elementImagesRef.current[element.id];
+      if (img) {
+        ctx.drawImage(img, ex, ey, ew, eh);
+      } else {
+        ctx.fillStyle = 'rgba(140, 210, 150, 0.55)';
+        ctx.fillRect(ex, ey, ew, eh);
+      }
+      ctx.strokeStyle = 'rgba(170, 230, 180, 0.85)';
+      ctx.lineWidth = 1.5 / zoom;
+      ctx.strokeRect(ex, ey, ew, eh);
+    }
+
     // enemy placement preview
     if (toolRef.current === 'enemy' && hoverGridRef.current.inside) {
       const previewDef = ENEMY_BY_ID[selectedEnemyRef.current];
@@ -470,6 +594,30 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       ctx.strokeStyle = valid ? 'rgba(120, 240, 140, 0.95)' : 'rgba(255, 90, 90, 0.95)';
       ctx.lineWidth = 2 / zoom;
       ctx.strokeRect(px, py, pw, ph);
+    }
+    if (toolRef.current === 'element' && hoverGridRef.current.inside && selectedElementRef.current) {
+      const def = elementDefs.find(d => d.id === selectedElementRef.current);
+      if (def) {
+        const { col, row } = hoverGridRef.current;
+        const valid = canPlaceElement(def, col, row);
+        const px = col * T - panX;
+        const py = row * T - panY;
+        const pw = def.ratioW * T;
+        const ph = def.ratioH * T;
+        const previewImg = elementImagesRef.current[def.id];
+        if (previewImg) {
+          ctx.save();
+          ctx.globalAlpha = valid ? 0.8 : 0.55;
+          ctx.drawImage(previewImg, px, py, pw, ph);
+          ctx.restore();
+        } else {
+          ctx.fillStyle = valid ? 'rgba(90, 210, 110, 0.45)' : 'rgba(220, 70, 70, 0.7)';
+          ctx.fillRect(px, py, pw, ph);
+        }
+        ctx.strokeStyle = valid ? 'rgba(120, 240, 140, 0.95)' : 'rgba(255, 90, 90, 0.95)';
+        ctx.lineWidth = 2 / zoom;
+        ctx.strokeRect(px, py, pw, ph);
+      }
     }
 
     // player marker
@@ -510,7 +658,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     ctx.restore();
 
     ctx.restore();
-  }, [canPlaceEnemy]);
+  }, [canPlaceElement, canPlaceEnemy, elementDefs]);
 
   // RAF loop
   useEffect(() => {
@@ -549,6 +697,37 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       };
     });
 
+    Promise.all(
+      ELEMENT_ASSETS.map(asset => new Promise<ElementDefinition>((resolve) => {
+        const elementImg = new Image();
+        elementImg.src = asset.url;
+        elementImg.onload = () => {
+          elementImagesRef.current[asset.id] = elementImg;
+          const ratioW = elementImg.naturalWidth / 128;
+          const ratioH = elementImg.naturalHeight / 128;
+          resolve({
+            id: asset.id,
+            label: asset.label,
+            filename: asset.filename,
+            url: asset.url,
+            widthPx: elementImg.naturalWidth,
+            heightPx: elementImg.naturalHeight,
+            ratioW,
+            ratioH,
+            tilesW: Math.max(1, Math.ceil(ratioW)),
+            tilesH: Math.max(1, Math.ceil(ratioH)),
+          });
+        };
+      })),
+    ).then(defs => {
+      const sorted = defs.sort((a, b) => a.label.localeCompare(b.label));
+      setElementDefs(sorted);
+      if (sorted.length > 0) {
+        setSelectedElementId(sorted[0].id);
+        selectedElementRef.current = sorted[0].id;
+      }
+    });
+
     return () => window.removeEventListener('resize', resize);
   }, []);
 
@@ -572,7 +751,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
   };
 
   const startDrag = (col: number, row: number) => {
-    if (toolRef.current === 'enemy') return;
+    if (toolRef.current === 'enemy' || toolRef.current === 'element') return;
     if (toolRef.current === 'water') {
       const mode = isWaterCell(col, row) && !isEdge(col, row, colsRef.current, rowsRef.current) ? 'remove' : 'place';
       dragRef.current = { active: true, mode, lastCol: col, lastRow: row };
@@ -585,7 +764,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
   };
 
   const continueDrag = (col: number, row: number) => {
-    if (toolRef.current === 'enemy') return;
+    if (toolRef.current === 'enemy' || toolRef.current === 'element') return;
     const d = dragRef.current;
     if (!d.active || (col === d.lastCol && row === d.lastRow)) return;
     d.lastCol = col; d.lastRow = row;
@@ -607,6 +786,22 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       row,
       damage: def.collisionDamage,
       moving: def.movingByDefault,
+    });
+  };
+
+  const placeOrRemoveElement = (col: number, row: number) => {
+    const existingIndex = getElementAt(col, row);
+    if (existingIndex >= 0) {
+      elementsRef.current.splice(existingIndex, 1);
+      return;
+    }
+    const def = elementDefs.find(d => d.id === selectedElementRef.current);
+    if (!def) return;
+    if (!canPlaceElement(def, col, row)) return;
+    elementsRef.current.push({
+      id: def.id,
+      col,
+      row,
     });
   };
 
@@ -687,6 +882,10 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     }
     if (toolRef.current === 'enemy') {
       placeOrRemoveEnemy(col, row);
+      return;
+    }
+    if (toolRef.current === 'element') {
+      placeOrRemoveElement(col, row);
       return;
     }
     startDrag(col, row);
@@ -801,6 +1000,10 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
         placeOrRemoveEnemy(col, row);
         return;
       }
+      if (toolRef.current === 'element') {
+        placeOrRemoveElement(col, row);
+        return;
+      }
       startDrag(col, row);
     }
   };
@@ -894,6 +1097,8 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
         damage: enemy.damage,
         moving: enemy.moving,
       }));
+    elementsRef.current = (data.elements ?? [])
+      .map(element => ({ id: element.id, col: element.col, row: element.row }));
     playerRef.current = { col: data.spawnCol, row: data.spawnRow - 1 };
     setHasPlayer(true);
     colsRef.current = data.cols;
@@ -918,6 +1123,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     gridRef.current = buildInitialGrid(DEFAULT_COLS, DEFAULT_ROWS);
     waterRef.current = new Set();
     enemiesRef.current = [];
+    elementsRef.current = [];
     setBgPreset('');
     setBgmPreset('');
     playerRef.current = null;
@@ -968,6 +1174,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
         waterRef.current,
         playerRef.current,
         enemiesRef.current,
+        elementsRef.current,
         colsRef.current,
         rowsRef.current,
         bgPreset,
@@ -994,6 +1201,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
         waterRef.current,
         playerRef.current,
         enemiesRef.current,
+        elementsRef.current,
         colsRef.current,
         rowsRef.current,
         bgPreset,
@@ -1013,6 +1221,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     gridRef.current = grid;
     waterRef.current = new Set();
     enemiesRef.current = [];
+    elementsRef.current = [];
     playerRef.current = { col: playerCol, row: playerRow };
     setHasPlayer(true);
     showStatus('Generated random level');
@@ -1057,6 +1266,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       zones,
       waterZones,
       enemies: enemiesRef.current,
+      elements: elementsRef.current,
       ...(bgPreset ? { bgPreset } : {}),
       ...(bgmPreset ? { bgmPreset } : {}),
     };
@@ -1083,7 +1293,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     <div style={{ position: 'relative', width: '100vw', height: '100vh', overflow: 'hidden' }}>
       <canvas
         ref={canvasRef}
-        style={{ display: 'block', cursor: tool === 'player' || tool === 'enemy' ? 'crosshair' : 'cell', touchAction: 'none' } as React.CSSProperties}
+        style={{ display: 'block', cursor: tool === 'player' || tool === 'enemy' || tool === 'element' ? 'crosshair' : 'cell', touchAction: 'none' } as React.CSSProperties}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -1148,10 +1358,18 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ color: '#888', fontSize: 11, fontFamily: 'monospace' }}>TOOL</span>
-        {(['tile', 'water', 'player', 'enemy'] as Tool[]).map(t => {
-          const label = t === 'tile' ? 'Tile' : t === 'water' ? 'Water' : t === 'player' ? 'Player' : 'Enemies';
-          const activeBg = t === 'water' ? '#1a5f9c' : t === 'enemy' ? '#7b2b47' : '#3a5fc8';
-          const activeBorder = t === 'water' ? '#3a9fe8' : t === 'enemy' ? '#c85a7b' : '#5a7fe8';
+        {(['tile', 'water', 'player', 'enemy', 'element'] as Tool[]).map(t => {
+          const label = t === 'tile'
+            ? 'Tile'
+            : t === 'water'
+              ? 'Water'
+              : t === 'player'
+                ? 'Player'
+                : t === 'enemy'
+                  ? 'Enemies'
+                  : 'Elements';
+          const activeBg = t === 'water' ? '#1a5f9c' : t === 'enemy' ? '#7b2b47' : t === 'element' ? '#2f7a4a' : '#3a5fc8';
+          const activeBorder = t === 'water' ? '#3a9fe8' : t === 'enemy' ? '#c85a7b' : t === 'element' ? '#65c992' : '#5a7fe8';
           return (
             <button
               key={t}
@@ -1202,6 +1420,38 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
             </select>
             <span style={{ color: '#777', fontSize: 11, fontFamily: 'monospace' }}>
               LMB place/remove, RMB edit stats
+            </span>
+          </div>
+        )}
+        {tool === 'element' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
+            <span style={{ color: '#888', fontSize: 11, fontFamily: 'monospace' }}>ELEMENT</span>
+            <select
+              value={selectedElementId}
+              onChange={e => {
+                setSelectedElementId(e.target.value);
+                selectedElementRef.current = e.target.value;
+              }}
+              style={{
+                minWidth: 270,
+                padding: '4px 8px',
+                background: 'rgba(40,40,60,0.8)',
+                color: '#ccc',
+                border: '1px solid #3a3a55',
+                borderRadius: 6,
+                fontSize: 11,
+                fontFamily: 'monospace',
+                outline: 'none',
+              }}
+            >
+              {elementDefs.map(def => (
+                <option key={def.id} value={def.id}>
+                  {def.filename} | {formatRatio(def.ratioW)}x{formatRatio(def.ratioH)}
+                </option>
+              ))}
+            </select>
+            <span style={{ color: '#777', fontSize: 11, fontFamily: 'monospace' }}>
+              Click to place/remove
             </span>
           </div>
         )}

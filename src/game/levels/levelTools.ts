@@ -23,3 +23,16 @@ export const e = (
   damage: number,
   moving: boolean,
 ): EnemyPlacement => ({ type, col, row, damage, moving });
+
+export interface LevelElement {
+  id: string;
+  col: number;
+  row: number;
+}
+
+/** Shorthand constructor for decorative element placement. */
+export const el = (
+  id: string,
+  col: number,
+  row: number,
+): LevelElement => ({ id, col, row });

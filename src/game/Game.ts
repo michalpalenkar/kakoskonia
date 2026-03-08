@@ -7,12 +7,14 @@ import { loadImage, loadSpriteTransparent } from './spriteUtils';
 import type { InputState, SpriteSheet } from './types';
 import type { LevelData } from './levels';
 import { ENEMY_BY_ID, type EnemyTypeId } from './enemyDefinitions';
+import { ELEMENT_ASSETS } from './elementDefinitions';
 
 const healthBarUrl = new URL('../assets/health-bar.png',         import.meta.url).href;
 
 const BG_PRESETS: Record<string, string> = {
   bg: new URL('../assets/bg/bg.png', import.meta.url).href,
   'bg-kedy-pucdej': new URL('../assets/bg/bg-kedy-pucdej.png', import.meta.url).href,
+  'bg-kedy-pucdej-watercolor': new URL('../assets/bg/kedy pucdej pozadie1.png', import.meta.url).href,
 };
 const BGM_PRESETS: Record<string, string> = {
   'kedy-pucdej': `${import.meta.env.BASE_URL}music/kedy-pucdej.mp3`,
@@ -26,22 +28,13 @@ const runUrl     = new URL('../assets/run-sprite.png',         import.meta.url).
 const verticalJumpUrl = new URL('../assets/vertical_jump2.png', import.meta.url).href;
 const forwardJumpUrl = new URL('../assets/forward_jump_sprite.png', import.meta.url).href;
 const fallUrl    = new URL('../assets/fall_sprite.png',        import.meta.url).href;
-const natureUrls = [
-  new URL('../assets/nature/grass.png', import.meta.url).href,
-  new URL('../assets/nature/flower.png', import.meta.url).href,
-  new URL('../assets/nature/bush.png', import.meta.url).href,
-  new URL('../assets/nature/bush2.png', import.meta.url).href,
-  new URL('../assets/nature/bush3.png', import.meta.url).href,
-  new URL('../assets/nature/tree.png', import.meta.url).href,
-];
 
 /** Camera zoom — 1.25× makes the player appear 25% larger */
 const ZOOM = 1.25;
 const FIXED_DT = 1 / 60;
-const OVERLAY_DENSITY = 0.58;
-const FLOWER_ASSET_INDEX = 1; // natureUrls[1] === flower.png
 
-interface NatureOverlay {
+interface RuntimeElement {
+  id: string;
   x: number;
   y: number;
   w: number;
@@ -88,7 +81,8 @@ export class Game {
   private bgmUnlocked = false;
   private tilemapImg!: HTMLImageElement;
   private healthBarImg!: HTMLImageElement;
-  private natureImgs: HTMLImageElement[] = [];
+  private elementImgs: Record<string, HTMLImageElement> = {};
+  private elements: RuntimeElement[] = [];
   private enemyImgs: Partial<Record<EnemyTypeId, HTMLImageElement>> = {};
   private enemies: RuntimeEnemy[] = [];
   private enemyHitCooldown = 0;
@@ -96,7 +90,6 @@ export class Game {
   private gameOverAnnounced = false;
   private shakeFrames = 0;
   private shakeMagnitude = 0;
-  private overlays: NatureOverlay[] = [];
   private skyClouds: SkyCloud[] = [];
 
   private keys: Record<string, boolean> = {};
@@ -136,6 +129,7 @@ export class Game {
     const bgUrlForLevel = bgPreset ? BG_PRESETS[bgPreset] : undefined;
     const bgPromise = bgUrlForLevel ? loadImage(bgUrlForLevel).catch(() => null) : Promise.resolve(null);
     const enemyEntries = Object.entries(ENEMY_BY_ID) as [EnemyTypeId, (typeof ENEMY_BY_ID)[EnemyTypeId]][];
+    const elementAssets = ELEMENT_ASSETS;
 
     const [bgImg, tilemapImg, healthBarImg, idleCanvas, runCanvas, verticalJumpCanvas, forwardJumpCanvas, fallCanvas, ...restAssets] = await Promise.all([
       bgPromise,
@@ -146,28 +140,31 @@ export class Game {
       loadSpriteTransparent(verticalJumpUrl),
       loadSpriteTransparent(forwardJumpUrl),
       loadSpriteTransparent(fallUrl),
-      ...natureUrls.map(loadImage),
       ...enemyEntries.map(([id, enemy]) => loadImage(enemy.spriteUrl).then(img => ({ id, img }))),
+      ...elementAssets.map(asset => loadImage(asset.url).then(img => ({ id: asset.id, img }))),
     ]);
 
-    const natureImgs = restAssets.slice(0, natureUrls.length) as HTMLImageElement[];
-    const enemyImgsLoaded = restAssets.slice(natureUrls.length) as { id: EnemyTypeId; img: HTMLImageElement }[];
+    const enemyImgsLoaded = restAssets.slice(0, enemyEntries.length) as { id: EnemyTypeId; img: HTMLImageElement }[];
+    const elementImgsLoaded = restAssets.slice(enemyEntries.length) as { id: string; img: HTMLImageElement }[];
 
     this.bgImg      = bgImg;
     this.tilemapImg = tilemapImg;
     this.healthBarImg = healthBarImg;
-    this.natureImgs = natureImgs;
     this.enemyImgs = {};
+    this.elementImgs = {};
     for (const loaded of enemyImgsLoaded) {
       this.enemyImgs[loaded.id] = loaded.img;
+    }
+    for (const loaded of elementImgsLoaded) {
+      this.elementImgs[loaded.id] = loaded.img;
     }
 
     // Build tile grid + collision rects
     this.tileMap = new TileMap(this.level.cols, this.level.rows, this.level.zones, this.level.waterZones ?? []);
     const colliders = this.tileMap.buildCollisionRects();
     this._waterRects = this.tileMap.buildWaterRects();
-    this.overlays = this.buildNatureOverlays();
     this.enemies = this.buildLevelEnemies();
+    this.elements = this.buildLevelElements();
 
     // Sprite sheets
     // steady-sprite.png  900 × 450  2 frames  fps 8
@@ -319,8 +316,8 @@ export class Game {
     // Player
     this.player.draw(ctx, camX, camY);
 
-    // Foreground nature overlays
-    this.drawNatureOverlays(camX, camY, evw, evh);
+    // Decorative elements
+    this.drawElements(camX, camY, evw, evh);
 
     ctx.restore();
 
@@ -401,7 +398,9 @@ export class Game {
 
     ctx.drawImage(bgImg, offsetX, offsetY, drawW, drawH);
 
-    const isKedy = this.level.bgPreset === 'bg-kedy-pucdej';
+    const isKedy =
+      this.level.bgPreset === 'bg-kedy-pucdej' ||
+      this.level.bgPreset === 'bg-kedy-pucdej-watercolor';
     if (isKedy) {
       this.drawMovingClouds(vw, vh);
       ctx.fillStyle = 'rgba(24, 56, 38, 0.22)';
@@ -628,58 +627,34 @@ export class Game {
     this.bgmUnlocked = false;
   }
 
-  private buildNatureOverlays(): NatureOverlay[] {
-    if (this.natureImgs.length === 0) return [];
-    const overlays: NatureOverlay[] = [];
-    const rand = seededRand((this.level.id * 73856093) ^ (this.level.cols * 19349663) ^ (this.level.rows * 83492791));
-    const occupied = new Set<string>();
-    const flower = this.natureImgs[FLOWER_ASSET_INDEX] ?? this.natureImgs[0];
-    const globalScale = TILE_SIZE / Math.max(1, flower.naturalWidth);
-
-    for (let r = 0; r < this.level.rows; r++) {
-      for (let c = 0; c < this.level.cols; c++) {
-        if (!this.tileMap.isSolid(c, r)) continue;
-        if (r === 0) continue; // no nature on top row
-        if (this.tileMap.isSolid(c, r - 1)) continue; // only tile tops exposed to air
-        if (rand() > OVERLAY_DENSITY) continue;
-
-        const img = this.natureImgs[Math.floor(rand() * this.natureImgs.length)];
-        const targetW = img.naturalWidth * globalScale;
-        const targetH = img.naturalHeight * globalScale;
-        const widthTiles = Math.max(1, Math.ceil(targetW / TILE_SIZE));
-        const startCol = c - Math.floor((widthTiles - 1) / 2);
-        const endCol = startCol + widthTiles - 1;
-        if (startCol < 0 || endCol >= this.level.cols) continue;
-
-        let hasRoom = true;
-        for (let cc = startCol; cc <= endCol; cc++) {
-          if (!this.tileMap.isSolid(cc, r) || this.tileMap.isSolid(cc, r - 1) || occupied.has(`${r}:${cc}`)) {
-            hasRoom = false;
-            break;
-          }
-        }
-        if (!hasRoom) continue;
-
-        const embedY = 4 + rand() * 6;
-        for (let cc = startCol; cc <= endCol; cc++) occupied.add(`${r}:${cc}`);
-        overlays.push({
-          x: startCol * TILE_SIZE + (widthTiles * TILE_SIZE - targetW) / 2,
-          y: r * TILE_SIZE - targetH + embedY,
-          w: targetW,
-          h: targetH,
-          img,
-        });
-      }
+  private buildLevelElements(): RuntimeElement[] {
+    const placed = this.level.elements ?? [];
+    const out: RuntimeElement[] = [];
+    for (const entry of placed) {
+      const img = this.elementImgs[entry.id];
+      if (!img) continue;
+      const ratioW = img.naturalWidth / 128;
+      const ratioH = img.naturalHeight / 128;
+      out.push({
+        id: entry.id,
+        x: entry.col * TILE_SIZE,
+        y: entry.row * TILE_SIZE,
+        w: ratioW * TILE_SIZE,
+        h: ratioH * TILE_SIZE,
+        img,
+      });
     }
-
-    return overlays;
+    return out;
   }
 
-  private drawNatureOverlays(camX: number, camY: number, viewW: number, viewH: number) {
+  private drawElements(camX: number, camY: number, viewW: number, viewH: number) {
     const { ctx } = this;
-    for (const o of this.overlays) {
-      if (o.x + o.w < camX || o.x > camX + viewW || o.y + o.h < camY || o.y > camY + viewH) continue;
-      ctx.drawImage(o.img, o.x - camX, o.y - camY, o.w, o.h);
+    for (const element of this.elements) {
+      if (
+        element.x + element.w < camX || element.x > camX + viewW ||
+        element.y + element.h < camY || element.y > camY + viewH
+      ) continue;
+      ctx.drawImage(element.img, element.x - camX, element.y - camY, element.w, element.h);
     }
   }
 
