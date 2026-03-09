@@ -486,7 +486,8 @@ export class Player {
     const topOffset = spriteKey === 'ledge' ? drawH * -0.14 : 0;
     const screenY = this.y - camY - (drawH - this.hitboxH) - topOffset;
     const ledgeOffsetX = spriteKey === 'ledge' ? (this.facingLeft ? -dw * 0.2 : dw * 0.2) : 0;
-    const centerX = screenX + this.hitboxW / 2 + ledgeOffsetX;
+    const landOffsetX = this.animState === 'land' ? (this.facingLeft ? 10 : -10) : 0;
+    const centerX = screenX + this.hitboxW / 2 + ledgeOffsetX + landOffsetX;
 
     // Most sprites face LEFT by default.
     // Ledge sprite has its own authored facing direction.
