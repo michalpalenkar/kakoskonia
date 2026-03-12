@@ -1,2 +1,2 @@
-// Re-export active level. Paste Map Builder output into src/game/levels/level1.ts.
-export { TILE_COLS, TILE_ROWS, SPAWN_X, SPAWN_Y, LEVEL_ZONES } from './levels/level1';
+// Re-export an existing level module so this file stays buildable.
+export { TILE_COLS, TILE_ROWS, SPAWN_X, SPAWN_Y, LEVEL_ZONES } from './levels/dunaj';

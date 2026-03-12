@@ -8,6 +8,7 @@ import type { InputState, SpriteSheet } from './types';
 import type { LevelData } from './levels';
 import { ENEMY_BY_ID, type EnemyTypeId } from './enemyDefinitions';
 import { ELEMENT_ASSETS } from './elementDefinitions';
+import { resolveTilePresetUrl } from './tilePresets';
 
 const healthBarUrl = new URL('../assets/health-bar.png',         import.meta.url).href;
 
@@ -22,7 +23,6 @@ const BGM_PRESETS: Record<string, string> = {
   hlavacikova: `${import.meta.env.BASE_URL}music/Hlavacikova.mp3`,
 };
 const BG_FALLBACK_COLOR = '#334863';
-const tilemapUrl = new URL('../assets/kakoskonia_tilemap.png', import.meta.url).href;
 const idleUrl    = new URL('../assets/steady-sprite.png',      import.meta.url).href;
 const runUrl     = new URL('../assets/run-sprite.png',         import.meta.url).href;
 const verticalJumpUrl = new URL('../assets/vertical_jump2.png', import.meta.url).href;
@@ -129,6 +129,7 @@ export class Game {
     const bgPreset = this.level.bgPreset;
     const bgUrlForLevel = bgPreset ? BG_PRESETS[bgPreset] : undefined;
     const bgPromise = bgUrlForLevel ? loadImage(bgUrlForLevel).catch(() => null) : Promise.resolve(null);
+    const tilemapUrl = resolveTilePresetUrl(this.level.tilePreset);
     const enemyEntries = Object.entries(ENEMY_BY_ID) as [EnemyTypeId, (typeof ENEMY_BY_ID)[EnemyTypeId]][];
     const elementAssets = ELEMENT_ASSETS;
 
@@ -311,9 +312,6 @@ export class Game {
     ctx.fillStyle = 'rgba(10, 8, 20, 0.32)';
     ctx.fillRect(0, 0, evw, evh);
 
-    // Auto-tiled level
-    this.tileMap.render(ctx, this.tilemapImg, camX, camY, evw, evh, true);
-
     // Enemies
     this.drawEnemies(camX, camY, evw, evh);
 
@@ -322,6 +320,9 @@ export class Game {
 
     // Decorative elements
     this.drawElements(camX, camY, evw, evh);
+
+    // Auto-tiled level (drawn on top so tiles appear in front)
+    this.tileMap.render(ctx, this.tilemapImg, camX, camY, evw, evh, true);
 
     ctx.restore();
 

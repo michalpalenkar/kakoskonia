@@ -1,4 +1,4 @@
-import { getAutoTileSrc, drawAutoTile, TILE_DSP as T } from './AutoTile';
+import { renderDualGrid, TILE_DSP as T } from './AutoTile';
 import type { Rect } from './types';
 
 export interface TileZone {
@@ -102,28 +102,23 @@ export class TileMap {
     viewH: number,
     hideTopRow = false,
   ) {
+    const isSolidForRender = (col: number, row: number) => {
+      if (hideTopRow && row === 0 && col > 0 && col < this.cols - 1) return false;
+      return this.isSolid(col, row);
+    };
+
+    renderDualGrid(
+      ctx, img,
+      isSolidForRender,
+      this.cols, this.rows,
+      camX, camY, viewW, viewH,
+    );
+
+    // Water tiles — cull to visible range
     const c0 = Math.max(0, Math.floor(camX / T));
     const c1 = Math.min(this.cols - 1, Math.ceil((camX + viewW) / T));
     const r0 = Math.max(0, Math.floor(camY / T));
     const r1 = Math.min(this.rows - 1, Math.ceil((camY + viewH) / T));
-
-    for (let r = r0; r <= r1; r++) {
-      for (let c = c0; c <= c1; c++) {
-        if (!this.isSolid(c, r)) continue;
-        if (hideTopRow && r === 0 && c > 0 && c < this.cols - 1) continue;
-        const isVisible = hideTopRow
-          ? (dc: number, dr: number) => {
-              const nc = c + dc, nr = r + dr;
-              if (nr === 0 && nc > 0 && nc < this.cols - 1) return false;
-              return this.isSolid(nc, nr);
-            }
-          : (dc: number, dr: number) => this.isSolid(c + dc, r + dr);
-        const src = getAutoTileSrc(isVisible);
-        drawAutoTile(ctx, img, src, c * T - camX, r * T - camY);
-      }
-    }
-
-    // Water tiles
     ctx.save();
     for (let r = r0; r <= r1; r++) {
       for (let c = c0; c <= c1; c++) {

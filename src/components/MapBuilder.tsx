@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { getAutoTileSrc, drawAutoTile, TILE_DSP as T } from '../game/AutoTile';
+import { getDualGridMask, drawDualGridTile, TILE_DSP as T } from '../game/AutoTile';
 import {
   ENEMY_DEFINITIONS,
   ENEMY_BY_ID,
@@ -11,6 +11,11 @@ import {
   listLevels, loadLevel, saveLevel, saveAsLevel, deleteLevel,
   generateRandomLevel, type LevelInfo,
 } from './levelApi';
+import {
+  DEFAULT_TILE_PRESET,
+  TILE_PRESET_OPTIONS,
+  resolveTilePresetUrl,
+} from '../game/tilePresets';
 
 const DEFAULT_COLS = 100;
 const DEFAULT_ROWS = 23;
@@ -18,8 +23,6 @@ const MIN_COLS = 2;
 const MIN_ROWS = 2;
 const PINCH_ZOOM_SENSITIVITY = 0.55;
 const PINCH_DEADZONE = 0.02;
-
-const tilemapUrl = new URL('../assets/kakoskonia_tilemap.png', import.meta.url).href;
 
 type Tool = 'tile' | 'player' | 'water' | 'enemy' | 'element';
 type EnemyPlacement = { type: EnemyTypeId; col: number; row: number; damage: number; moving: boolean };
@@ -104,6 +107,7 @@ function exportLevelData(
   rows: number,
   bgPreset: string,
   bgmPreset: string,
+  tilePreset: string,
 ): string {
   const zones = extractZones(grid, cols, rows);
   const wZones = extractZones(waterGrid, cols, rows);
@@ -130,7 +134,8 @@ function exportLevelData(
     ``,
     ...(bgPreset ? [`export const BG_PRESET = '${bgPreset}';`] : []),
     ...(bgmPreset ? [`export const BGM_PRESET = '${bgmPreset}';`] : []),
-    ...((bgPreset || bgmPreset) ? [''] : []),
+    ...(tilePreset && tilePreset !== DEFAULT_TILE_PRESET ? [`export const TILE_PRESET = '${tilePreset}';`] : []),
+    ...((bgPreset || bgmPreset || (tilePreset && tilePreset !== DEFAULT_TILE_PRESET)) ? [''] : []),
     `export const LEVEL_ZONES: TileZone[] = [`,
     zonesStr,
     `];`,
@@ -203,6 +208,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
   const [hasPlayer, setHasPlayer] = useState(false);
   const [bgPreset, setBgPreset] = useState<string>('');
   const [bgmPreset, setBgmPreset] = useState<string>('');
+  const [tilePreset, setTilePreset] = useState<string>(DEFAULT_TILE_PRESET);
   const [hoveredEnemyInfo, setHoveredEnemyInfo] = useState<{
     screenX: number;
     screenY: number;
@@ -493,14 +499,15 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     }
     ctx.restore();
 
-    // tiles
+    // tiles (dual-grid: visual grid offset by half a tile)
     const img = imgRef.current;
     if (img) {
-      for (let r = r0; r < r1; r++) {
-        for (let c = c0; c < c1; c++) {
-          if (!isSolid(c, r)) continue;
-          const src = getAutoTileSrc((dc, dr) => isSolid(c + dc, r + dr));
-          drawAutoTile(ctx, img, src, c * T - panX, r * T - panY);
+      const halfT = T / 2;
+      for (let vr = r0; vr <= r1; vr++) {
+        for (let vc = c0; vc <= c1; vc++) {
+          const mask = getDualGridMask(isSolid, vc, vr);
+          if (mask === 0) continue;
+          drawDualGridTile(ctx, img, mask, vc * T - halfT - panX, vr * T - halfT - panY);
         }
       }
     }
@@ -685,10 +692,6 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     resize();
     window.addEventListener('resize', resize);
 
-    const img = new Image();
-    img.src = tilemapUrl;
-    img.onload = () => { imgRef.current = img; };
-
     ENEMY_DEFINITIONS.forEach(def => {
       const enemyImg = new Image();
       enemyImg.src = def.spriteUrl;
@@ -730,6 +733,12 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
 
     return () => window.removeEventListener('resize', resize);
   }, []);
+
+  useEffect(() => {
+    const img = new Image();
+    img.src = resolveTilePresetUrl(tilePreset);
+    img.onload = () => { imgRef.current = img; };
+  }, [tilePreset]);
 
   // ── tile painting helpers ─────────────────────────────────────────────────
 
@@ -1088,6 +1097,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     waterRef.current = newWater;
     setBgPreset(data.bgPreset ?? '');
     setBgmPreset(data.bgmPreset ?? '');
+    setTilePreset(data.tilePreset ?? DEFAULT_TILE_PRESET);
     enemiesRef.current = (data.enemies ?? [])
       .filter(enemy => ENEMY_BY_ID[enemy.type as EnemyTypeId] != null)
       .map(enemy => ({
@@ -1126,6 +1136,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     elementsRef.current = [];
     setBgPreset('');
     setBgmPreset('');
+    setTilePreset(DEFAULT_TILE_PRESET);
     playerRef.current = null;
     setHasPlayer(false);
     const z = Math.min(window.innerWidth / (DEFAULT_COLS * T), window.innerHeight / (DEFAULT_ROWS * T)) * 0.9;
@@ -1179,6 +1190,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
         rowsRef.current,
         bgPreset,
         bgmPreset,
+        tilePreset,
       );
       await saveLevel(currentFilename, content);
       showStatus(`Saved ${currentFilename}`);
@@ -1206,6 +1218,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
         rowsRef.current,
         bgPreset,
         bgmPreset,
+        tilePreset,
       );
       const filename = await saveAsLevel(saveAsName.trim(), content);
       setCurrentFilename(filename);
@@ -1269,6 +1282,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       elements: elementsRef.current,
       ...(bgPreset ? { bgPreset } : {}),
       ...(bgmPreset ? { bgmPreset } : {}),
+      ...(tilePreset ? { tilePreset } : {}),
     };
     const encoded = btoa(JSON.stringify(levelData));
     const base = window.location.pathname;
@@ -1468,6 +1482,22 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
           >
             {BG_OPTIONS.map(o => (
               <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ color: '#888', fontSize: 11, fontFamily: 'monospace' }}>TILE</span>
+          <select
+            value={tilePreset}
+            onChange={e => setTilePreset(e.target.value)}
+            style={{
+              padding: '4px 8px', background: 'rgba(40,40,60,0.8)',
+              color: '#ccc', border: '1px solid #3a3a55', borderRadius: 6,
+              fontSize: 11, fontFamily: 'monospace', outline: 'none',
+            }}
+          >
+            {TILE_PRESET_OPTIONS.map(option => (
+              <option key={option.value} value={option.value}>{option.label}</option>
             ))}
           </select>
         </div>

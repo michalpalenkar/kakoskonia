@@ -18,6 +18,7 @@ export interface LevelData {
   waterZones?: TileZone[];
   bgPreset?: string;
   bgmPreset?: string;
+  tilePreset?: string;
   enemies?: EnemyPlacement[];
   elements?: LevelElement[];
 }
@@ -34,6 +35,7 @@ export const LEVELS: LevelData[] = [
     waterZones: (dunaj as any).WATER_ZONES ?? [],
     bgPreset: (dunaj as any).BG_PRESET ?? undefined,
     bgmPreset: (dunaj as any).BGM_PRESET ?? undefined,
+    tilePreset: (dunaj as any).TILE_PRESET ?? undefined,
     enemies: (dunaj as any).ENEMIES ?? [],
     elements: (dunaj as any).ELEMENTS ?? [],
   },
@@ -48,6 +50,7 @@ export const LEVELS: LevelData[] = [
     waterZones: (evin_level as any).WATER_ZONES ?? [],
     bgPreset: (evin_level as any).BG_PRESET ?? undefined,
     bgmPreset: (evin_level as any).BGM_PRESET ?? undefined,
+    tilePreset: (evin_level as any).TILE_PRESET ?? undefined,
     enemies: (evin_level as any).ENEMIES ?? [],
     elements: (evin_level as any).ELEMENTS ?? [],
   },
@@ -62,6 +65,7 @@ export const LEVELS: LevelData[] = [
     waterZones: (hlavacikova as any).WATER_ZONES ?? [],
     bgPreset: (hlavacikova as any).BG_PRESET ?? undefined,
     bgmPreset: (hlavacikova as any).BGM_PRESET ?? undefined,
+    tilePreset: (hlavacikova as any).TILE_PRESET ?? undefined,
     enemies: (hlavacikova as any).ENEMIES ?? [],
     elements: (hlavacikova as any).ELEMENTS ?? [],
   },
@@ -76,6 +80,7 @@ export const LEVELS: LevelData[] = [
     waterZones: (kedy_pucdej as any).WATER_ZONES ?? [],
     bgPreset: (kedy_pucdej as any).BG_PRESET ?? undefined,
     bgmPreset: (kedy_pucdej as any).BGM_PRESET ?? undefined,
+    tilePreset: (kedy_pucdej as any).TILE_PRESET ?? undefined,
     enemies: (kedy_pucdej as any).ENEMIES ?? [],
     elements: (kedy_pucdej as any).ELEMENTS ?? [],
   },
@@ -90,6 +95,7 @@ export const LEVELS: LevelData[] = [
     waterZones: (tami_level_backup as any).WATER_ZONES ?? [],
     bgPreset: (tami_level_backup as any).BG_PRESET ?? undefined,
     bgmPreset: (tami_level_backup as any).BGM_PRESET ?? undefined,
+    tilePreset: (tami_level_backup as any).TILE_PRESET ?? undefined,
     enemies: (tami_level_backup as any).ENEMIES ?? [],
     elements: (tami_level_backup as any).ELEMENTS ?? [],
   },
@@ -104,6 +110,7 @@ export const LEVELS: LevelData[] = [
     waterZones: (vyhlad_na_rakusko as any).WATER_ZONES ?? [],
     bgPreset: (vyhlad_na_rakusko as any).BG_PRESET ?? undefined,
     bgmPreset: (vyhlad_na_rakusko as any).BGM_PRESET ?? undefined,
+    tilePreset: (vyhlad_na_rakusko as any).TILE_PRESET ?? undefined,
     enemies: (vyhlad_na_rakusko as any).ENEMIES ?? [],
     elements: (vyhlad_na_rakusko as any).ELEMENTS ?? [],
   },
