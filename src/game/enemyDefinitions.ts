@@ -1,4 +1,4 @@
-export type EnemyTypeId = 'acid_slime' | 'stone_beetle' | 'magma_golem' | 'void_titan';
+export type EnemyTypeId = 'acid_slime' | 'stone_beetle' | 'magma_golem' | 'void_titan' | 'lisaj';
 
 export interface EnemyDefinition {
   id: EnemyTypeId;
@@ -14,6 +14,7 @@ const acidSlimeUrl = new URL('../assets/enemies/acid_slime.png', import.meta.url
 const stoneBeetleUrl = new URL('../assets/enemies/stone_beetle.png', import.meta.url).href;
 const magmaGolemUrl = new URL('../assets/enemies/magma_golem.png', import.meta.url).href;
 const voidTitanUrl = new URL('../assets/enemies/void_titan.png', import.meta.url).href;
+const lisajUrl = new URL('../assets/enemies/Lisaj_1.png', import.meta.url).href;
 
 export const ENEMY_DEFINITIONS: EnemyDefinition[] = [
   {
@@ -51,6 +52,15 @@ export const ENEMY_DEFINITIONS: EnemyDefinition[] = [
     tilesW: 4,
     tilesH: 4,
     spriteUrl: voidTitanUrl,
+  },
+  {
+    id: 'lisaj',
+    name: 'Lisaj',
+    collisionDamage: 1,
+    movingByDefault: true,
+    tilesW: 2,
+    tilesH: 1,
+    spriteUrl: lisajUrl,
   },
 ];
 

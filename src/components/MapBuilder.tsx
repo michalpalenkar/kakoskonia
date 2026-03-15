@@ -7,6 +7,7 @@ import {
   type EnemyDefinition,
 } from '../game/enemyDefinitions';
 import { ELEMENT_ASSETS } from '../game/elementDefinitions';
+import { computeElementTileRatio } from '../game/elementSizing';
 import {
   listLevels, loadLevel, saveLevel, saveAsLevel, deleteLevel,
   generateRandomLevel, type LevelInfo,
@@ -706,8 +707,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
         elementImg.src = asset.url;
         elementImg.onload = () => {
           elementImagesRef.current[asset.id] = elementImg;
-          const ratioW = elementImg.naturalWidth / 128;
-          const ratioH = elementImg.naturalHeight / 128;
+          const { ratioW, ratioH } = computeElementTileRatio(elementImg.naturalWidth, elementImg.naturalHeight);
           resolve({
             id: asset.id,
             label: asset.label,

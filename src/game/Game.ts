@@ -3,11 +3,12 @@ import { Camera } from './Camera';
 import { TileMap } from './TileMap';
 import { PLAYER_H } from './constants';
 import { TILE_DSP as TILE_SIZE } from './AutoTile';
-import { loadImage, loadSpriteTransparent } from './spriteUtils';
+import { loadImage, loadSpriteTransparent, loadSpriteTransparentDark } from './spriteUtils';
 import type { InputState, SpriteSheet } from './types';
 import type { LevelData } from './levels';
 import { ENEMY_BY_ID, type EnemyTypeId } from './enemyDefinitions';
 import { ELEMENT_ASSETS } from './elementDefinitions';
+import { computeElementTileRatio } from './elementSizing';
 import { resolveTilePresetUrl } from './tilePresets';
 
 const healthBarUrl = new URL('../assets/health-bar.png',         import.meta.url).href;
@@ -29,10 +30,26 @@ const verticalJumpUrl = new URL('../assets/vertical_jump2.png', import.meta.url)
 const forwardJumpUrl = new URL('../assets/forward_jump_sprite.png', import.meta.url).href;
 const fallUrl    = new URL('../assets/fall_sprite.png',        import.meta.url).href;
 const ledgeUrl   = new URL('../assets/ledge-sprite.png',       import.meta.url).href;
+const LISAJ_URLS = {
+  walkR1: new URL('../assets/enemies/Lisaj_1.png', import.meta.url).href,
+  walkR2: new URL('../assets/enemies/Lisaj_2.png', import.meta.url).href,
+  walkL1: new URL('../assets/enemies/Lisaj_1 left.png', import.meta.url).href,
+  walkL2: new URL('../assets/enemies/Lisaj_2 left.png', import.meta.url).href,
+  walkL3: new URL('../assets/enemies/Lisaj_3 left.png', import.meta.url).href,
+  turnR: new URL('../assets/enemies/Lisaj_turn1.png', import.meta.url).href,
+  turnL: new URL('../assets/enemies/Lisaj_turn2.png', import.meta.url).href,
+  eatR1: new URL('../assets/enemies/Lisaj_eat.png', import.meta.url).href,
+  eatR2: new URL('../assets/enemies/Lisaj_eat2.png', import.meta.url).href,
+  eatL1: new URL('../assets/enemies/Lisaj_eat_left.png', import.meta.url).href,
+  eatL2: new URL('../assets/enemies/Lisaj_eat2_left.png', import.meta.url).href,
+} as const;
+type LisajImageKey = keyof typeof LISAJ_URLS;
 
 /** Camera zoom — 1.25× makes the player appear 25% larger */
 const ZOOM = 1.25;
 const FIXED_DT = 1 / 60;
+const REACTIVE_PLANTS = new Set(['mysi chvost', 'pupava', 'datelina', 'salvia', 'bush_small']);
+const TILE_PRESS_MAX_PX = 4;
 
 interface RuntimeElement {
   id: string;
@@ -41,6 +58,8 @@ interface RuntimeElement {
   w: number;
   h: number;
   img: HTMLImageElement;
+  sway: number;
+  reactivePlant: boolean;
 }
 
 interface SkyCloud {
@@ -62,6 +81,17 @@ interface RuntimeEnemy {
   moving: boolean;
   dir: -1 | 1;
   speed: number;
+  walkDistance: number;
+  behaviorState: 'walk' | 'eat';
+  behaviorTimer: number;
+  animTimer: number;
+  turnTimer: number;
+}
+
+interface AlphaMask {
+  w: number;
+  h: number;
+  rgba: Uint8ClampedArray;
 }
 
 interface GameHooks {
@@ -85,6 +115,8 @@ export class Game {
   private elementImgs: Record<string, HTMLImageElement> = {};
   private elements: RuntimeElement[] = [];
   private enemyImgs: Partial<Record<EnemyTypeId, HTMLImageElement>> = {};
+  private lisajImgs: Partial<Record<LisajImageKey, HTMLCanvasElement>> = {};
+  private lisajMasks: Partial<Record<LisajImageKey, AlphaMask>> = {};
   private enemies: RuntimeEnemy[] = [];
   private enemyHitCooldown = 0;
   private gameOver = false;
@@ -132,6 +164,7 @@ export class Game {
     const tilemapUrl = resolveTilePresetUrl(this.level.tilePreset);
     const enemyEntries = Object.entries(ENEMY_BY_ID) as [EnemyTypeId, (typeof ENEMY_BY_ID)[EnemyTypeId]][];
     const elementAssets = ELEMENT_ASSETS;
+    const lisajEntries = Object.entries(LISAJ_URLS) as [LisajImageKey, string][];
 
     const [bgImg, tilemapImg, healthBarImg, idleCanvas, runCanvas, verticalJumpCanvas, forwardJumpCanvas, fallCanvas, ledgeCanvas, ...restAssets] = await Promise.all([
       bgPromise,
@@ -145,21 +178,36 @@ export class Game {
       loadSpriteTransparent(ledgeUrl),
       ...enemyEntries.map(([id, enemy]) => loadImage(enemy.spriteUrl).then(img => ({ id, img }))),
       ...elementAssets.map(asset => loadImage(asset.url).then(img => ({ id: asset.id, img }))),
+      ...lisajEntries.map(([id, url]) => loadSpriteTransparentDark(url).then(img => ({ id, img }))),
     ]);
 
     const enemyImgsLoaded = restAssets.slice(0, enemyEntries.length) as { id: EnemyTypeId; img: HTMLImageElement }[];
-    const elementImgsLoaded = restAssets.slice(enemyEntries.length) as { id: string; img: HTMLImageElement }[];
+    const elementImgsLoaded = restAssets.slice(enemyEntries.length, enemyEntries.length + elementAssets.length) as { id: string; img: HTMLImageElement }[];
+    const lisajImgsLoaded = restAssets.slice(enemyEntries.length + elementAssets.length) as { id: LisajImageKey; img: HTMLCanvasElement }[];
 
     this.bgImg      = bgImg;
     this.tilemapImg = tilemapImg;
     this.healthBarImg = healthBarImg;
     this.enemyImgs = {};
     this.elementImgs = {};
+    this.lisajImgs = {};
+    this.lisajMasks = {};
     for (const loaded of enemyImgsLoaded) {
       this.enemyImgs[loaded.id] = loaded.img;
     }
     for (const loaded of elementImgsLoaded) {
       this.elementImgs[loaded.id] = loaded.img;
+    }
+    for (const loaded of lisajImgsLoaded) {
+      this.lisajImgs[loaded.id] = loaded.img;
+      const lctx = loaded.img.getContext('2d');
+      if (!lctx) continue;
+      const data = lctx.getImageData(0, 0, loaded.img.width, loaded.img.height).data;
+      this.lisajMasks[loaded.id] = {
+        w: loaded.img.width,
+        h: loaded.img.height,
+        rgba: data,
+      };
     }
 
     // Build tile grid + collision rects
@@ -251,7 +299,9 @@ export class Game {
           this.tryStartBgm();
         }
         this.updateEnemies();
-        const enemyColliders = this.enemies.map(enemy => ({ x: enemy.x, y: enemy.y, w: enemy.w, h: enemy.h }));
+        const enemyColliders = this.enemies
+          .filter(enemy => enemy.type !== 'lisaj')
+          .map(enemy => ({ x: enemy.x, y: enemy.y, w: enemy.w, h: enemy.h }));
         this.player.update(this.input, this._colliders.concat(enemyColliders), this._waterRects);
         this.applyEnemyDamageToPlayer();
         this.camera.update(
@@ -323,6 +373,7 @@ export class Game {
 
     // Auto-tiled level (drawn on top so tiles appear in front)
     this.tileMap.render(ctx, this.tilemapImg, camX, camY, evw, evh, true);
+    this.drawTilePressure(camX, camY, evw, evh);
 
     ctx.restore();
 
@@ -450,10 +501,15 @@ export class Game {
         y: enemy.row * TILE_SIZE,
         w: def.tilesW * TILE_SIZE,
         h: def.tilesH * TILE_SIZE,
-        damage: Math.max(1, enemy.damage || def.collisionDamage),
+        damage: def.id === 'lisaj' ? 1 : Math.max(1, enemy.damage || def.collisionDamage),
         moving: !!enemy.moving,
         dir: 1,
-        speed: 70,
+        speed: def.id === 'lisaj' ? 34 : 70,
+        walkDistance: 0,
+        behaviorState: 'walk',
+        behaviorTimer: 0,
+        animTimer: 0,
+        turnTimer: 0,
       });
     }
     return enemies;
@@ -465,6 +521,10 @@ export class Game {
 
     for (const enemy of this.enemies) {
       if (!enemy.moving) continue;
+      if (enemy.type === 'lisaj') {
+        this.updateLisajEnemy(enemy, dt);
+        continue;
+      }
       const nextX = enemy.x + enemy.dir * enemy.speed * dt;
       const maxX = this.tileMap.cols * TILE_SIZE - enemy.w;
 
@@ -479,20 +539,61 @@ export class Game {
     }
   }
 
+  private updateLisajEnemy(enemy: RuntimeEnemy, dt: number) {
+    enemy.animTimer++;
+    if (enemy.turnTimer > 0) enemy.turnTimer--;
+    if (enemy.behaviorState === 'eat') {
+      enemy.behaviorTimer--;
+      if (enemy.behaviorTimer <= 0) {
+        enemy.behaviorState = 'walk';
+        enemy.animTimer = 0;
+      }
+      return;
+    }
+
+    const prevX = enemy.x;
+    const nextX = enemy.x + enemy.dir * enemy.speed * dt;
+    const maxX = this.tileMap.cols * TILE_SIZE - enemy.w;
+
+    const hitsWall = this.rectHitsColliders(nextX, enemy.y, enemy.w, enemy.h);
+    const hasGroundAhead = this.hasGroundInFront(nextX, enemy);
+    const outOfBounds = nextX < 0 || nextX > maxX;
+
+    if (hitsWall || !hasGroundAhead || outOfBounds) {
+      enemy.dir = enemy.dir === 1 ? -1 : 1;
+      enemy.turnTimer = 22;
+      enemy.animTimer = 0;
+      return;
+    }
+
+    enemy.x = nextX;
+    enemy.walkDistance += Math.abs(enemy.x - prevX);
+    if (enemy.walkDistance >= 3 * TILE_SIZE) {
+      enemy.walkDistance = 0;
+      enemy.behaviorState = 'eat';
+      enemy.behaviorTimer = 110;
+      enemy.animTimer = 0;
+    }
+  }
+
   private applyEnemyDamageToPlayer() {
     if (this.enemyHitCooldown > 0) return;
+    const body = this.getPlayerDamageRect();
     for (const enemy of this.enemies) {
-      if (!this.rectsTouchOrOverlap(
-        this.player.x,
-        this.player.y,
-        this.player.getHitboxWidth(),
-        this.player.getHitboxHeight(),
+      if (enemy.type === 'lisaj') {
+        if (!this.lisajTouchesPlayer(enemy, body.x, body.y, body.w, body.h)) continue;
+      } else if (!this.rectsTouchOrOverlap(
+        body.x,
+        body.y,
+        body.w,
+        body.h,
         enemy.x,
         enemy.y,
         enemy.w,
         enemy.h,
       )) continue;
-      this.player.health = Math.max(0, this.player.health - enemy.damage);
+      const touchDamage = enemy.type === 'lisaj' ? 1 : enemy.damage;
+      this.player.health = Math.max(0, this.player.health - touchDamage);
       const playerCenter = this.player.x + this.player.getHitboxWidth() / 2;
       const enemyCenter = enemy.x + enemy.w / 2;
       const knockDir = playerCenter >= enemyCenter ? 1 : -1;
@@ -506,20 +607,133 @@ export class Game {
     }
   }
 
+  private getPlayerDamageRect(): { x: number; y: number; w: number; h: number } {
+    const x = this.player.x;
+    const y = this.player.y;
+    const w = this.player.getHitboxWidth();
+    const h = this.player.getHitboxHeight();
+    // Smaller torso/legs rectangle used only for taking damage (ignores scarf/extremes).
+    return {
+      x: x + w * 0.2,
+      y: y + h * 0.18,
+      w: w * 0.6,
+      h: h * 0.72,
+    };
+  }
+
+  private getLisajSpriteKey(enemy: RuntimeEnemy): LisajImageKey | undefined {
+    if (enemy.turnTimer > 0) {
+      return enemy.dir > 0 ? 'turnR' : 'turnL';
+    }
+    if (enemy.behaviorState === 'eat') {
+      const eatIndex = Math.floor(enemy.animTimer / 36) % 2;
+      return enemy.dir > 0
+        ? (eatIndex === 0 ? 'eatR1' : 'eatR2')
+        : (eatIndex === 0 ? 'eatL1' : 'eatL2');
+    }
+    const walkIndex = Math.floor(enemy.animTimer / 16) % 4;
+    if (enemy.dir > 0) {
+      const seq: LisajImageKey[] = ['walkR1', 'walkR2', 'walkR1', 'walkR2'];
+      return seq[walkIndex];
+    }
+    const seq: LisajImageKey[] = ['walkL1', 'walkL2', 'walkL3', 'walkL2'];
+    return seq[walkIndex];
+  }
+
+  private getLisajSprite(enemy: RuntimeEnemy): CanvasImageSource | undefined {
+    const key = this.getLisajSpriteKey(enemy);
+    if (!key) return undefined;
+    return this.lisajImgs[key];
+  }
+
+  private lisajTouchesPlayer(enemy: RuntimeEnemy, px: number, py: number, pw: number, ph: number): boolean {
+    const hurtW = enemy.w * 0.5;
+    const hurtH = enemy.h * 0.48;
+    const hurtX = enemy.x + (enemy.w - hurtW) * 0.5;
+    const hurtY = enemy.y + enemy.h * 0.52;
+
+    if (!this.rectsTouchOrOverlap(px, py, pw, ph, hurtX, hurtY, hurtW, hurtH)) return false;
+    const spriteKey = this.getLisajSpriteKey(enemy);
+    if (!spriteKey) return false;
+    const mask = this.lisajMasks[spriteKey];
+    if (!mask) return true;
+
+    const ox0 = Math.max(px, hurtX);
+    const oy0 = Math.max(py, hurtY);
+    const ox1 = Math.min(px + pw, hurtX + hurtW);
+    const oy1 = Math.min(py + ph, hurtY + hurtH);
+    if (ox1 <= ox0 || oy1 <= oy0) return false;
+
+    const sx = mask.w / enemy.w;
+    const sy = mask.h / enemy.h;
+    const step = 1;
+    for (let y = oy0; y < oy1; y += step) {
+      const my = Math.max(0, Math.min(mask.h - 1, Math.floor((y - enemy.y) * sy)));
+      for (let x = ox0; x < ox1; x += step) {
+        const mx = Math.max(0, Math.min(mask.w - 1, Math.floor((x - enemy.x) * sx)));
+        const p = (my * mask.w + mx) * 4;
+        const r = mask.rgba[p];
+        const g = mask.rgba[p + 1];
+        const b = mask.rgba[p + 2];
+        const a = mask.rgba[p + 3];
+        const yNorm = my / Math.max(1, mask.h - 1);
+        if (yNorm < 0.42) continue; // ignore top area (neck/scarf/head)
+        if (this.isLisajDamagePixel(r, g, b, a)) return true;
+      }
+    }
+    return false;
+  }
+
+  private isLisajDamagePixel(r: number, g: number, b: number, a: number): boolean {
+    if (a <= 5) return false;
+    // Exclude red scarf from damage collider (including darker anti-aliased reds).
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const chroma = max - min;
+    const saturation = max === 0 ? 0 : chroma / max;
+    const hue = this.rgbHue(r, g, b);
+    const isScarfRed =
+      saturation > 0.22 &&
+      (hue <= 28 || hue >= 332) &&
+      r > 40 &&
+      r > g * 1.1 &&
+      r > b * 1.1;
+    return !isScarfRed;
+  }
+
+  private rgbHue(r: number, g: number, b: number): number {
+    const rn = r / 255;
+    const gn = g / 255;
+    const bn = b / 255;
+    const max = Math.max(rn, gn, bn);
+    const min = Math.min(rn, gn, bn);
+    const d = max - min;
+    if (d === 0) return 0;
+    let h = 0;
+    if (max === rn) h = ((gn - bn) / d) % 6;
+    else if (max === gn) h = (bn - rn) / d + 2;
+    else h = (rn - gn) / d + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+    return h;
+  }
+
   private drawEnemies(camX: number, camY: number, viewW: number, viewH: number) {
     const { ctx } = this;
     for (const enemy of this.enemies) {
       if (enemy.x + enemy.w < camX || enemy.x > camX + viewW || enemy.y + enemy.h < camY || enemy.y > camY + viewH) continue;
-      const img = this.enemyImgs[enemy.type];
+      const img = enemy.type === 'lisaj' ? this.getLisajSprite(enemy) : this.enemyImgs[enemy.type];
       if (img) {
         ctx.drawImage(img, enemy.x - camX, enemy.y - camY, enemy.w, enemy.h);
       } else {
         ctx.fillStyle = '#af495c';
         ctx.fillRect(enemy.x - camX, enemy.y - camY, enemy.w, enemy.h);
       }
-      ctx.strokeStyle = 'rgba(20, 10, 20, 0.6)';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(enemy.x - camX, enemy.y - camY, enemy.w, enemy.h);
+      if (enemy.type !== 'lisaj') {
+        ctx.strokeStyle = 'rgba(20, 10, 20, 0.6)';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(enemy.x - camX, enemy.y - camY, enemy.w, enemy.h);
+      }
     }
   }
 
@@ -638,8 +852,8 @@ export class Game {
     for (const entry of placed) {
       const img = this.elementImgs[entry.id];
       if (!img) continue;
-      const ratioW = img.naturalWidth / 128;
-      const ratioH = img.naturalHeight / 128;
+      const { ratioW, ratioH } = computeElementTileRatio(img.naturalWidth, img.naturalHeight);
+      const normalizedId = entry.id.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
       out.push({
         id: entry.id,
         x: entry.col * TILE_SIZE,
@@ -647,6 +861,8 @@ export class Game {
         w: ratioW * TILE_SIZE,
         h: ratioH * TILE_SIZE,
         img,
+        sway: 0,
+        reactivePlant: REACTIVE_PLANTS.has(normalizedId),
       });
     }
     return out;
@@ -654,12 +870,77 @@ export class Game {
 
   private drawElements(camX: number, camY: number, viewW: number, viewH: number) {
     const { ctx } = this;
+    const playerCenterX = this.player.x + this.player.getHitboxWidth() * 0.5;
+    const playerBottomY = this.player.y + this.player.getHitboxHeight();
     for (const element of this.elements) {
       if (
         element.x + element.w < camX || element.x > camX + viewW ||
         element.y + element.h < camY || element.y > camY + viewH
       ) continue;
-      ctx.drawImage(element.img, element.x - camX, element.y - camY, element.w, element.h);
+
+      if (element.reactivePlant) {
+        const rootX = element.x + element.w * 0.5;
+        const rootY = element.y + element.h;
+        const dx = rootX - playerCenterX;
+        const dy = Math.abs(rootY - playerBottomY);
+        const rangeX = TILE_SIZE * 2.1;
+        const rangeY = TILE_SIZE * 2.0;
+        let target = 0;
+        if (Math.abs(dx) < rangeX && dy < rangeY) {
+          const strength = (1 - Math.abs(dx) / rangeX) * (1 - dy / rangeY);
+          const maxBend = 0.15; // strong visible bend (~8.6 degrees)
+          target = Math.sign(dx) * maxBend * Math.max(0, strength);
+        }
+        element.sway += (target - element.sway) * 0.34;
+        if (Math.abs(element.sway) < 0.0002 && target === 0) element.sway = 0;
+      } else {
+        element.sway = 0;
+      }
+
+      const drawX = element.x - camX;
+      const drawY = element.y - camY;
+      if (element.sway !== 0) {
+        const anchorX = drawX + element.w * 0.5;
+        const anchorY = drawY + element.h;
+        ctx.save();
+        ctx.translate(anchorX, anchorY);
+        ctx.rotate(element.sway);
+        ctx.drawImage(element.img, -element.w * 0.5, -element.h, element.w, element.h);
+        ctx.restore();
+      } else {
+        ctx.drawImage(element.img, drawX, drawY, element.w, element.h);
+      }
+    }
+  }
+
+  private drawTilePressure(camX: number, camY: number, viewW: number, viewH: number) {
+    if (!this.player.grounded) return;
+    const feetY = this.player.y + this.player.getHitboxHeight();
+    const row = Math.floor(feetY / TILE_SIZE);
+    const cMin = Math.floor(this.player.x / TILE_SIZE) - 1;
+    const cMax = Math.floor((this.player.x + this.player.getHitboxWidth()) / TILE_SIZE) + 1;
+    const playerCenterX = this.player.x + this.player.getHitboxWidth() * 0.5;
+
+    for (let c = cMin; c <= cMax; c++) {
+      if (c < 0 || c >= this.tileMap.cols) continue;
+      if (!this.tileMap.isSolid(c, row) || this.tileMap.isSolid(c, row - 1)) continue;
+
+      const tileCenterX = c * TILE_SIZE + TILE_SIZE * 0.5;
+      const dist = Math.abs(tileCenterX - playerCenterX);
+      const influence = Math.max(0, 1 - dist / (TILE_SIZE * 1.4));
+      if (influence <= 0) continue;
+
+      const pressPx = TILE_PRESS_MAX_PX * influence;
+      const screenX = c * TILE_SIZE - camX;
+      const screenY = row * TILE_SIZE - camY;
+
+      // Re-draw only this tile region with a tiny downward offset to fake compression.
+      this.ctx.save();
+      this.ctx.beginPath();
+      this.ctx.rect(screenX - 1, screenY - 1, TILE_SIZE + 2, TILE_SIZE + 2);
+      this.ctx.clip();
+      this.tileMap.render(this.ctx, this.tilemapImg, camX, camY - pressPx, viewW, viewH, true);
+      this.ctx.restore();
     }
   }
 
