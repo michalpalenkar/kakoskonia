@@ -29,15 +29,19 @@ export function GameCanvas({ level, onBack }: Props) {
     setGameOverMessage(null);
     const game = new Game(canvas, level, { onGameOver: setGameOverMessage });
     gameRef.current = game;
-    let started = false;
+    let cancelled = false;
 
     game.init().then(() => {
-      started = true;
+      if (cancelled) {
+        game.stop();
+        return;
+      }
       game.start();
     });
 
     return () => {
-      if (started) game.stop();
+      cancelled = true;
+      game.stop();
       gameRef.current = null;
     };
   }, [level, session]);
