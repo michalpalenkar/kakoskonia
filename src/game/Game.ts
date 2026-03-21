@@ -12,8 +12,10 @@ import type { InputState, SpriteSheet } from "./types";
 import type { LevelData } from "./levels";
 import { ENEMY_BY_ID, type EnemyTypeId } from "./enemyDefinitions";
 import { ELEMENT_ASSETS } from "./elementDefinitions";
+import { FOUNTAIN_ASSETS } from "./fountainDefinitions";
 import { computeElementTileRatio } from "./elementSizing";
 import { resolveTilePresetUrl } from "./tilePresets";
+import { saveGame } from "./saveSystem";
 
 const healthBarUrl = new URL("../assets/health-bar.png", import.meta.url).href;
 
@@ -124,6 +126,15 @@ interface RuntimeElement {
   behindPlayer: boolean;
 }
 
+interface RuntimeFountain {
+  id: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  img: HTMLImageElement;
+}
+
 interface SkyCloud {
   x01: number;
   y01: number;
@@ -177,6 +188,11 @@ export class Game {
   private healthBarImg!: HTMLImageElement;
   private elementImgs: Record<string, HTMLImageElement> = {};
   private elements: RuntimeElement[] = [];
+  private fountainImgs: Record<string, HTMLImageElement> = {};
+  private fountains: RuntimeFountain[] = [];
+  private nearFountain: RuntimeFountain | null = null;
+  private fountainHintAlpha = 0;
+  private fountainSaveCooldown = 0;
   private enemyImgs: Partial<Record<EnemyTypeId, HTMLImageElement>> = {};
   private lisajImgs: Partial<Record<LisajImageKey, HTMLCanvasElement>> = {};
   private lisajMasks: Partial<Record<LisajImageKey, AlphaMask>> = {};
@@ -225,12 +241,20 @@ export class Game {
     canvas: HTMLCanvasElement,
     level: LevelData,
     hooks: GameHooks = {},
+    savedX?: number,
+    savedY?: number,
+    savedHealth?: number,
   ) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d")!;
     this.level = level;
     this.hooks = hooks;
-    this.player = new Player(level.spawnX, level.spawnY - PLAYER_H);
+    const startX = savedX ?? level.spawnX;
+    const startY = savedY ?? (level.spawnY - PLAYER_H);
+    this.player = new Player(startX, startY);
+    if (savedHealth != null) {
+      this.player.health = savedHealth;
+    }
     this.camera = new Camera();
     this.skyClouds = this.buildSkyClouds();
   }
@@ -248,6 +272,7 @@ export class Game {
       (typeof ENEMY_BY_ID)[EnemyTypeId],
     ][];
     const elementAssets = ELEMENT_ASSETS;
+    const fountainAssets = FOUNTAIN_ASSETS;
     const lisajEntries = Object.entries(LISAJ_URLS) as [
       LisajImageKey,
       string,
@@ -296,6 +321,9 @@ export class Game {
       ...husenicaEntries.map(([id, url]) =>
         loadSpriteTransparentDark(url).then((img) => ({ id, img })),
       ),
+      ...fountainAssets.map((asset) =>
+        loadImage(asset.url).then((img) => ({ id: asset.id, img })),
+      ),
     ]);
 
     const enemyImgsLoaded = restAssets.slice(0, enemyEntries.length) as {
@@ -312,7 +340,11 @@ export class Game {
     ) as { id: LisajImageKey; img: HTMLCanvasElement }[];
     const husenicaImgsLoaded = restAssets.slice(
       enemyEntries.length + elementAssets.length + lisajEntries.length,
+      enemyEntries.length + elementAssets.length + lisajEntries.length + husenicaEntries.length,
     ) as { id: HusenicaImageKey; img: HTMLCanvasElement }[];
+    const fountainImgsLoaded = restAssets.slice(
+      enemyEntries.length + elementAssets.length + lisajEntries.length + husenicaEntries.length,
+    ) as { id: string; img: HTMLImageElement }[];
 
     this.bgImg = bgImg;
     this.tilemapImg = tilemapImg;
@@ -347,6 +379,10 @@ export class Game {
     for (const loaded of husenicaImgsLoaded) {
       this.husenicaImgs[loaded.id] = loaded.img;
     }
+    this.fountainImgs = {};
+    for (const loaded of fountainImgsLoaded) {
+      this.fountainImgs[loaded.id] = loaded.img;
+    }
 
     // Build tile grid + collision rects
     this.tileMap = new TileMap(
@@ -359,6 +395,7 @@ export class Game {
     this._waterRects = this.tileMap.buildWaterRects();
     this.enemies = this.buildLevelEnemies();
     this.elements = this.buildLevelElements();
+    this.fountains = this.buildLevelFountains();
 
     // Sprite sheets
     // steady-sprite.png  900 × 450  2 frames  fps 8
@@ -464,6 +501,7 @@ export class Game {
         );
         this.applyKickDamageToEnemies();
         this.applyEnemyDamageToPlayer();
+        this.updateFountains();
         this.camera.update(
           this.player.x,
           this.player.y,
@@ -558,6 +596,9 @@ export class Game {
 
     // Enemies
     this.drawEnemies(camX, camY, evw, evh);
+
+    // Fountains (behind player)
+    this.drawFountains(camX, camY, evw, evh);
 
     // Player
     this.player.draw(ctx, camX, camY);
@@ -1360,6 +1401,126 @@ export class Game {
       } else {
         ctx.drawImage(element.img, drawX, drawY, element.w, element.h);
       }
+    }
+  }
+
+  private buildLevelFountains(): RuntimeFountain[] {
+    const placed = this.level.fountains ?? [];
+    const out: RuntimeFountain[] = [];
+    for (const entry of placed) {
+      const img = this.fountainImgs[entry.id];
+      if (!img) continue;
+      const rawW = img.naturalWidth / 128;
+      const rawH = img.naturalHeight / 128;
+      out.push({
+        id: entry.id,
+        x: entry.col * TILE_SIZE,
+        y: entry.row * TILE_SIZE,
+        w: rawW * TILE_SIZE,
+        h: rawH * TILE_SIZE,
+        img,
+      });
+    }
+    return out;
+  }
+
+  private updateFountains() {
+    if (this.fountainSaveCooldown > 0) this.fountainSaveCooldown--;
+
+    const px = this.player.x;
+    const py = this.player.y;
+    const pw = this.player.getHitboxWidth();
+    const ph = this.player.getHitboxHeight();
+    const playerCX = px + pw / 2;
+    const playerCY = py + ph / 2;
+
+    let nearest: RuntimeFountain | null = null;
+    let nearestDist = Infinity;
+    const RANGE = TILE_SIZE * 2.5;
+
+    for (const fountain of this.fountains) {
+      const fcx = fountain.x + fountain.w / 2;
+      const fcy = fountain.y + fountain.h / 2;
+      const dist = Math.hypot(fcx - playerCX, fcy - playerCY);
+      if (dist < RANGE && dist < nearestDist) {
+        nearest = fountain;
+        nearestDist = dist;
+      }
+    }
+
+    this.nearFountain = nearest;
+
+    if (nearest) {
+      this.fountainHintAlpha = Math.min(1, this.fountainHintAlpha + 0.06);
+    } else {
+      this.fountainHintAlpha = Math.max(0, this.fountainHintAlpha - 0.08);
+    }
+
+    // E key interaction
+    if (nearest && (this.keys["e"] || this.keys["E"]) && this.fountainSaveCooldown <= 0) {
+      this.player.health = this.player.maxHealth;
+      this.fountainSaveCooldown = 60; // 1 second cooldown
+      saveGame({
+        levelId: this.level.id,
+        playerX: this.player.x,
+        playerY: this.player.y,
+        health: this.player.maxHealth,
+      });
+    }
+  }
+
+  private drawFountains(
+    camX: number,
+    camY: number,
+    viewW: number,
+    viewH: number,
+  ) {
+    const { ctx } = this;
+    for (const fountain of this.fountains) {
+      if (
+        fountain.x + fountain.w < camX ||
+        fountain.x > camX + viewW ||
+        fountain.y + fountain.h < camY ||
+        fountain.y > camY + viewH
+      )
+        continue;
+      ctx.drawImage(
+        fountain.img,
+        fountain.x - camX,
+        fountain.y - camY,
+        fountain.w,
+        fountain.h,
+      );
+    }
+
+    // Draw hint above nearest fountain
+    if (this.fountainHintAlpha > 0.01 && this.nearFountain) {
+      const f = this.nearFountain;
+      const hintX = f.x + f.w / 2 - camX;
+      const hintY = f.y - 18 - camY;
+      ctx.save();
+      ctx.globalAlpha = this.fountainHintAlpha;
+      ctx.font = "bold 13px monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+
+      // Background pill
+      const text = "Rest";
+      const metrics = ctx.measureText(text);
+      const padX = 8;
+      const padY = 4;
+      const pillW = metrics.width + padX * 2;
+      const pillH = 16 + padY * 2;
+      const pillX = hintX - pillW / 2;
+      const pillY = hintY - pillH + 4;
+      ctx.fillStyle = "rgba(10, 10, 30, 0.75)";
+      ctx.beginPath();
+      ctx.roundRect(pillX, pillY, pillW, pillH, 6);
+      ctx.fill();
+
+      ctx.fillStyle = "#a0d8ff";
+      ctx.fillText(text, hintX, hintY);
+      ctx.restore();
     }
   }
 

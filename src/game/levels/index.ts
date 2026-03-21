@@ -1,11 +1,16 @@
-import type { TileZone } from '../TileMap';
-import type { EnemyPlacement, LevelElement } from './levelTools';
-import * as dunaj from './dunaj';
-import * as evin_level from './evin_level';
-import * as hlavacikova from './hlavacikova';
-import * as kedy_pucdej from './kedy_pucdej';
-import * as tami_level_backup from './tami_level_backup';
-import * as vyhlad_na_rakusko from './vyhlad_na_rakusko';
+import type { TileZone } from "../TileMap";
+import type {
+  EnemyPlacement,
+  LevelElement,
+  FountainPlacement,
+} from "./levelTools";
+import * as dunaj from "./dunaj";
+import * as evin_level from "./evin_level";
+import * as hlavacikova from "./hlavacikova";
+import * as kedy_pucdej from "./kedy_pucdej";
+import * as rest_save_test from "./rest_save_test";
+import * as tami_level_backup from "./tami_level_backup";
+import * as vyhlad_na_rakusko from "./vyhlad_na_rakusko";
 
 export interface LevelData {
   id: number;
@@ -21,12 +26,13 @@ export interface LevelData {
   tilePreset?: string;
   enemies?: EnemyPlacement[];
   elements?: LevelElement[];
+  fountains?: FountainPlacement[];
 }
 
 export const LEVELS: LevelData[] = [
   {
     id: 1,
-    name: 'Dunaj',
+    name: "Dunaj",
     cols: dunaj.TILE_COLS,
     rows: dunaj.TILE_ROWS,
     spawnX: dunaj.SPAWN_X,
@@ -38,10 +44,11 @@ export const LEVELS: LevelData[] = [
     tilePreset: (dunaj as any).TILE_PRESET ?? undefined,
     enemies: (dunaj as any).ENEMIES ?? [],
     elements: (dunaj as any).ELEMENTS ?? [],
+    fountains: (dunaj as any).FOUNTAINS ?? [],
   },
   {
     id: 2,
-    name: 'Evin level',
+    name: "Evin level",
     cols: evin_level.TILE_COLS,
     rows: evin_level.TILE_ROWS,
     spawnX: evin_level.SPAWN_X,
@@ -53,10 +60,11 @@ export const LEVELS: LevelData[] = [
     tilePreset: (evin_level as any).TILE_PRESET ?? undefined,
     enemies: (evin_level as any).ENEMIES ?? [],
     elements: (evin_level as any).ELEMENTS ?? [],
+    fountains: (evin_level as any).FOUNTAINS ?? [],
   },
   {
     id: 3,
-    name: 'Hlavacikova',
+    name: "Hlavacikova",
     cols: hlavacikova.TILE_COLS,
     rows: hlavacikova.TILE_ROWS,
     spawnX: hlavacikova.SPAWN_X,
@@ -68,10 +76,11 @@ export const LEVELS: LevelData[] = [
     tilePreset: (hlavacikova as any).TILE_PRESET ?? undefined,
     enemies: (hlavacikova as any).ENEMIES ?? [],
     elements: (hlavacikova as any).ELEMENTS ?? [],
+    fountains: (hlavacikova as any).FOUNTAINS ?? [],
   },
   {
     id: 4,
-    name: 'Kedy pucdej',
+    name: "Kedy pucdej",
     cols: kedy_pucdej.TILE_COLS,
     rows: kedy_pucdej.TILE_ROWS,
     spawnX: kedy_pucdej.SPAWN_X,
@@ -83,10 +92,27 @@ export const LEVELS: LevelData[] = [
     tilePreset: (kedy_pucdej as any).TILE_PRESET ?? undefined,
     enemies: (kedy_pucdej as any).ENEMIES ?? [],
     elements: (kedy_pucdej as any).ELEMENTS ?? [],
+    fountains: (kedy_pucdej as any).FOUNTAINS ?? [],
   },
   {
     id: 5,
-    name: 'Tami level backup',
+    name: "Rest save test",
+    cols: rest_save_test.TILE_COLS,
+    rows: rest_save_test.TILE_ROWS,
+    spawnX: rest_save_test.SPAWN_X,
+    spawnY: rest_save_test.SPAWN_Y,
+    zones: rest_save_test.LEVEL_ZONES,
+    waterZones: (rest_save_test as any).WATER_ZONES ?? [],
+    bgPreset: (rest_save_test as any).BG_PRESET ?? undefined,
+    bgmPreset: (rest_save_test as any).BGM_PRESET ?? undefined,
+    tilePreset: (rest_save_test as any).TILE_PRESET ?? undefined,
+    enemies: (rest_save_test as any).ENEMIES ?? [],
+    elements: (rest_save_test as any).ELEMENTS ?? [],
+    fountains: (rest_save_test as any).FOUNTAINS ?? [],
+  },
+  {
+    id: 6,
+    name: "Tami level backup",
     cols: tami_level_backup.TILE_COLS,
     rows: tami_level_backup.TILE_ROWS,
     spawnX: tami_level_backup.SPAWN_X,
@@ -98,10 +124,11 @@ export const LEVELS: LevelData[] = [
     tilePreset: (tami_level_backup as any).TILE_PRESET ?? undefined,
     enemies: (tami_level_backup as any).ENEMIES ?? [],
     elements: (tami_level_backup as any).ELEMENTS ?? [],
+    fountains: (tami_level_backup as any).FOUNTAINS ?? [],
   },
   {
-    id: 6,
-    name: 'Vyhlad na rakusko',
+    id: 7,
+    name: "Vyhlad na rakusko",
     cols: vyhlad_na_rakusko.TILE_COLS,
     rows: vyhlad_na_rakusko.TILE_ROWS,
     spawnX: vyhlad_na_rakusko.SPAWN_X,
@@ -113,5 +140,6 @@ export const LEVELS: LevelData[] = [
     tilePreset: (vyhlad_na_rakusko as any).TILE_PRESET ?? undefined,
     enemies: (vyhlad_na_rakusko as any).ENEMIES ?? [],
     elements: (vyhlad_na_rakusko as any).ELEMENTS ?? [],
+    fountains: (vyhlad_na_rakusko as any).FOUNTAINS ?? [],
   },
 ];

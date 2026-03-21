@@ -36,3 +36,16 @@ export const el = (
   col: number,
   row: number,
 ): LevelElement => ({ id, col, row });
+
+export interface FountainPlacement {
+  id: string;
+  col: number;
+  row: number;
+}
+
+/** Shorthand constructor for fountain placement. */
+export const fn = (
+  id: string,
+  col: number,
+  row: number,
+): FountainPlacement => ({ id, col, row });

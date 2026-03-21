@@ -1,13 +1,22 @@
 import { useState } from 'react';
 import { LEVELS, type LevelData } from '../game/levels';
+import { loadSave } from '../game/saveSystem';
 
 interface Props {
-  onPlay: (level: LevelData) => void;
+  onPlay: (level: LevelData, savedX?: number, savedY?: number, savedHealth?: number) => void;
   onMapBuilder?: () => void;
 }
 
 export function GameMenu({ onPlay, onMapBuilder }: Props) {
   const [selected, setSelected] = useState(0);
+  const savedData = loadSave();
+
+  const handleContinue = () => {
+    if (!savedData) return;
+    const level = LEVELS.find(l => l.id === savedData.levelId);
+    if (!level) return;
+    onPlay(level, savedData.playerX, savedData.playerY, savedData.health);
+  };
 
   return (
     <div
@@ -78,6 +87,26 @@ export function GameMenu({ onPlay, onMapBuilder }: Props) {
       >
         PLAY
       </button>
+
+      {savedData && (
+        <button
+          onClick={handleContinue}
+          style={{
+            marginTop: 16,
+            padding: '12px 40px',
+            background: 'rgba(80, 160, 120, 0.85)',
+            border: '1px solid #6ac090',
+            borderRadius: 8,
+            color: '#fff',
+            fontSize: 16,
+            fontFamily: 'monospace',
+            cursor: 'pointer',
+            letterSpacing: 2,
+          }}
+        >
+          CONTINUE
+        </button>
+      )}
 
       {onMapBuilder && (
         <button
