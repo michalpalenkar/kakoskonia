@@ -1,12 +1,13 @@
 import { TILE_DSP } from '../AutoTile';
-import { z } from './levelTools';
-import type { TileZone } from './levelTools';
+import { z, e, el } from './levelTools';
+import type { TileZone, EnemyPlacement, LevelElement } from './levelTools';
 
 export const TILE_COLS = 98;
 export const TILE_ROWS = 64;
 
-export const SPAWN_X = 47 * TILE_DSP;
-export const SPAWN_Y = 61 * TILE_DSP - 1;
+export const SPAWN_X = 6 * TILE_DSP;
+export const SPAWN_Y = 5 * TILE_DSP - 1;
+
 export const BGM_PRESET = 'hlavacikova';
 
 export const LEVEL_ZONES: TileZone[] = [
@@ -214,4 +215,78 @@ export const LEVEL_ZONES: TileZone[] = [
   z(  1, 63,   2,  1),
   z( 23, 63,  14,  1),
   z( 44, 63,  53,  1),
+];
+
+export const ENEMIES: EnemyPlacement[] = [
+  e('husenica',  77, 62, 2, true),
+  e('husenica',  50, 62, 2, true),
+  e('husenica',  30, 62, 2, true),
+  e('husenica',  17, 34, 2, true),
+  e('husenica',  17, 13, 2, true),
+  e('lisaj',  18,  4, 1, true),
+  e('lisaj',  48, 14, 1, true),
+  e('lisaj',  74,  5, 1, true),
+  e('lisaj',  68, 18, 1, true),
+  e('lisaj',  89, 38, 1, true),
+  e('lisaj',  51, 52, 1, true),
+  e('lisaj',  20, 42, 1, true),
+];
+
+export const ELEMENTS: LevelElement[] = [
+  el('Electric_box',  43,  7),
+  el('Electric_box',  68, 38),
+  el('Datelina',   7,  3),
+  el('Datelina',  10, 22),
+  el('Datelina',   4, 38),
+  el('Datelina',  24, 53),
+  el('Datelina',  53, 45),
+  el('Datelina',  73, 45),
+  el('Datelina',  87, 58),
+  el('Datelina',  89, 21),
+  el('Datelina',  75, 11),
+  el('Mysi chvost',  66,  3),
+  el('Mysi chvost',  60, 13),
+  el('Mysi chvost',  50, 23),
+  el('Mysi chvost',  43, 29),
+  el('Mysi chvost',  33, 40),
+  el('Mysi chvost',  13, 40),
+  el('Mysi chvost',  10, 55),
+  el('Mysi chvost',  11, 13),
+  el('Mysi chvost',  42,  7),
+  el('pupava',  34, 13),
+  el('pupava',  51, 13),
+  el('pupava',  61, 31),
+  el('pupava',  84, 55),
+  el('pupava',  57, 52),
+  el('pupava',  36, 61),
+  el('rock new',  35, 54),
+  el('rock new',  41, 16),
+  el('rock new',  88,  6),
+  el('rock new',  82, 37),
+  el('Rock2',  53, 27),
+  el('Rock2',  25, 42),
+  el('Rock2',   8, 56),
+  el('Rock2',   2, 12),
+  el('Rock3',   5,  9),
+  el('Rock3',   9,  5),
+  el('Rock3',  37,  7),
+  el('Rock3',  45, 22),
+  el('Rock3',  55, 38),
+  el('Rock3',  46, 43),
+  el('Rock3',  45, 58),
+  el('Rock4',  23, 13),
+  el('Rock4',  22, 34),
+  el('Rock4',  40, 35),
+  el('Rock4',  77, 50),
+  el('Rock4',  69, 54),
+  el('Rock4',  94, 31),
+  el('Rock4',  81, 18),
+  el('Salvia',  82, 19),
+  el('Salvia',  61, 46),
+  el('Salvia',  40, 51),
+  el('Salvia',   6, 32),
+  el('Salvia',   5, 18),
+  el('Salvia',   1, 48),
+  el('Salvia',  54, 61),
+  el('Salvia',  92, 61),
 ];

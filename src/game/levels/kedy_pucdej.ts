@@ -215,7 +215,6 @@ export const WATER_ZONES: TileZone[] = [
 
 export const ENEMIES: EnemyPlacement[] = [
   e('lisaj',  13,  8, 1, true),
-  e('lisaj',  29, 19, 1, true),
   e('lisaj',  17, 30, 1, true),
   e('lisaj',  17, 48, 1, true),
   e('lisaj',   2, 51, 1, true),
@@ -225,6 +224,22 @@ export const ENEMIES: EnemyPlacement[] = [
   e('lisaj',  51, 31, 1, true),
   e('lisaj',   6, 15, 1, true),
   e('lisaj',  25, 15, 1, true),
+  e('husenica',  31, 19, 2, true),
+  e('husenica',  14, 40, 2, true),
+  e('husenica',  36, 38, 2, true),
+  e('husenica',  49, 48, 2, true),
+  e('husenica',  44, 58, 2, true),
+  e('husenica',  38, 67, 2, true),
+  e('husenica',  45, 72, 2, true),
+  e('husenica',  14, 73, 2, true),
+  e('husenica',   2, 58, 2, true),
+  e('husenica',   6, 27, 2, true),
+  e('lisaj',  40,  7, 1, true),
+  e('lisaj',  23, 11, 1, true),
+  e('lisaj',  21, 18, 1, true),
+  e('lisaj',  24, 40, 1, true),
+  e('lisaj',  29, 46, 1, true),
+  e('lisaj',   2, 47, 1, true),
 ];
 
 export const ELEMENTS: LevelElement[] = [

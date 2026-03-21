@@ -18,7 +18,7 @@ export interface SpriteSheet {
   fps: number;
 }
 
-export type AnimState = 'idle' | 'run' | 'jump' | 'fall' | 'land' | 'ledge';
+export type AnimState = 'idle' | 'run' | 'jump' | 'fall' | 'land' | 'ledge' | 'kick';
 
 export interface InputState {
   left: boolean;
@@ -27,5 +27,7 @@ export interface InputState {
   jumpJustPressed: boolean;
   dash: boolean;
   dashJustPressed: boolean;
+  attack: boolean;
+  attackJustPressed: boolean;
   down: boolean;
 }

@@ -707,7 +707,11 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
         elementImg.src = asset.url;
         elementImg.onload = () => {
           elementImagesRef.current[asset.id] = elementImg;
-          const { ratioW, ratioH } = computeElementTileRatio(elementImg.naturalWidth, elementImg.naturalHeight);
+          const { ratioW, ratioH } = computeElementTileRatio(
+            elementImg.naturalWidth,
+            elementImg.naturalHeight,
+            asset.id,
+          );
           resolve({
             id: asset.id,
             label: asset.label,

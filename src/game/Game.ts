@@ -42,6 +42,9 @@ const forwardJumpUrl = new URL(
 ).href;
 const fallUrl = new URL("../assets/fall_sprite.png", import.meta.url).href;
 const ledgeUrl = new URL("../assets/ledge-sprite.png", import.meta.url).href;
+const kick1Url = new URL("../assets/Sprite_kick1.png", import.meta.url).href;
+const kick2Url = new URL("../assets/Sprite_kick2.png", import.meta.url).href;
+const kick3Url = new URL("../assets/Sprite_kick3.png", import.meta.url).href;
 const LISAJ_URLS = {
   walkR1: new URL("../assets/enemies/lisaj/Lisaj_1.png", import.meta.url).href,
   walkR2: new URL("../assets/enemies/lisaj/Lisaj_2.png", import.meta.url).href,
@@ -99,6 +102,14 @@ const REACTIVE_PLANTS = new Set([
   "salvia",
   "bush_small",
 ]);
+const BACKGROUND_ELEMENT_IDS = new Set([
+  "electrix box",
+  "electrix_box",
+  "electrix-box",
+  "electric box",
+  "electric_box",
+  "electric-box",
+]);
 const TILE_PRESS_MAX_PX = 4;
 
 interface RuntimeElement {
@@ -110,6 +121,7 @@ interface RuntimeElement {
   img: HTMLImageElement;
   sway: number;
   reactivePlant: boolean;
+  behindPlayer: boolean;
 }
 
 interface SkyCloud {
@@ -128,6 +140,7 @@ interface RuntimeEnemy {
   w: number;
   h: number;
   damage: number;
+  hp: number;
   moving: boolean;
   dir: -1 | 1;
   speed: number;
@@ -180,6 +193,7 @@ export class Game {
   private keys: Record<string, boolean> = {};
   private prevJump = false;
   private prevDash = false;
+  private prevAttack = false;
   private input: InputState = {
     left: false,
     right: false,
@@ -187,6 +201,8 @@ export class Game {
     jumpJustPressed: false,
     dash: false,
     dashJustPressed: false,
+    attack: false,
+    attackJustPressed: false,
     down: false,
   };
 
@@ -251,6 +267,9 @@ export class Game {
       forwardJumpCanvas,
       fallCanvas,
       ledgeCanvas,
+      kick1Canvas,
+      kick2Canvas,
+      kick3Canvas,
       ...restAssets
     ] = await Promise.all([
       bgPromise,
@@ -262,6 +281,9 @@ export class Game {
       loadSpriteTransparent(forwardJumpUrl),
       loadSpriteTransparent(fallUrl),
       loadSpriteTransparent(ledgeUrl),
+      loadSpriteTransparent(kick1Url),
+      loadSpriteTransparent(kick2Url),
+      loadSpriteTransparent(kick3Url),
       ...enemyEntries.map(([id, enemy]) =>
         loadImage(enemy.spriteUrl).then((img) => ({ id, img })),
       ),
@@ -352,6 +374,7 @@ export class Game {
       jumpForward: makeSheet(forwardJumpCanvas, 2, 10),
       fall: makeSheet(fallCanvas, 2, 10),
       ledge: makeSheet(ledgeCanvas, 1, 10),
+      kick: makeSheetFromFrames([kick1Canvas, kick2Canvas, kick3Canvas], 18),
     };
 
     // Capture collider list on the player (we pass it each update)
@@ -439,6 +462,7 @@ export class Game {
           this._colliders.concat(enemyColliders),
           this._waterRects,
         );
+        this.applyKickDamageToEnemies();
         this.applyEnemyDamageToPlayer();
         this.camera.update(
           this.player.x,
@@ -473,6 +497,12 @@ export class Game {
       this.touch.jump
     );
     const dash = !!(this.keys["c"] || this.keys["C"]);
+    const attack = !!(
+      this.keys["v"] ||
+      this.keys["V"] ||
+      this.keys["k"] ||
+      this.keys["K"]
+    );
     this.input = {
       left: !!(
         this.keys["ArrowLeft"] ||
@@ -490,10 +520,13 @@ export class Game {
       jumpJustPressed: jump && !this.prevJump,
       dash,
       dashJustPressed: dash && !this.prevDash,
+      attack,
+      attackJustPressed: attack && !this.prevAttack,
       down: !!(this.keys["ArrowDown"] || this.keys["s"] || this.keys["S"]),
     };
     this.prevJump = jump;
     this.prevDash = dash;
+    this.prevAttack = attack;
   }
 
   private render(evw: number, evh: number, worldW: number, worldH: number) {
@@ -520,14 +553,17 @@ export class Game {
     ctx.fillStyle = "rgba(10, 8, 20, 0.32)";
     ctx.fillRect(0, 0, evw, evh);
 
+    // Background decorative elements
+    this.drawElements(camX, camY, evw, evh, true);
+
     // Enemies
     this.drawEnemies(camX, camY, evw, evh);
 
     // Player
     this.player.draw(ctx, camX, camY);
 
-    // Decorative elements
-    this.drawElements(camX, camY, evw, evh);
+    // Foreground decorative elements
+    this.drawElements(camX, camY, evw, evh, false);
 
     // Auto-tiled level (drawn on top so tiles appear in front)
     this.tileMap.render(ctx, this.tilemapImg, camX, camY, evw, evh, true);
@@ -682,6 +718,7 @@ export class Game {
           def.id === "lisaj" || def.id === "husenica"
             ? 1
             : Math.max(1, enemy.damage || def.collisionDamage),
+        hp: def.id === "husenica" ? 2 : 1,
         moving: !!enemy.moving,
         dir: 1,
         speed:
@@ -822,6 +859,28 @@ export class Game {
       return;
     }
     enemy.x = nextX;
+  }
+
+  private applyKickDamageToEnemies() {
+    if (!this.player.canConsumeKickHit()) return;
+    const kick = this.player.getKickRect();
+    for (let i = this.enemies.length - 1; i >= 0; i--) {
+      const enemy = this.enemies[i];
+      if (!this.rectsOverlap(kick.x, kick.y, kick.w, kick.h, enemy.x, enemy.y, enemy.w, enemy.h)) continue;
+      enemy.hp -= 1;
+      const recoilDir: -1 | 1 = this.player.facingLeft ? 1 : -1;
+      this.player.applyKickRecoil(recoilDir, 4.5, 5);
+      this.player.consumeKickHit();
+      if (enemy.hp <= 0) {
+        this.enemies.splice(i, 1);
+        this.shakeFrames = Math.max(this.shakeFrames, 5);
+        this.shakeMagnitude = Math.max(this.shakeMagnitude, 2.5);
+      } else {
+        this.shakeFrames = Math.max(this.shakeFrames, 3);
+        this.shakeMagnitude = Math.max(this.shakeMagnitude, 1.5);
+      }
+      break;
+    }
   }
 
   private getHusenicaSpriteKey(
@@ -1222,6 +1281,7 @@ export class Game {
       const { ratioW, ratioH } = computeElementTileRatio(
         img.naturalWidth,
         img.naturalHeight,
+        entry.id,
       );
       const normalizedId = entry.id
         .normalize("NFD")
@@ -1236,6 +1296,7 @@ export class Game {
         img,
         sway: 0,
         reactivePlant: REACTIVE_PLANTS.has(normalizedId),
+        behindPlayer: BACKGROUND_ELEMENT_IDS.has(normalizedId),
       });
     }
     return out;
@@ -1246,11 +1307,13 @@ export class Game {
     camY: number,
     viewW: number,
     viewH: number,
+    behindPlayer: boolean,
   ) {
     const { ctx } = this;
     const playerCenterX = this.player.x + this.player.getHitboxWidth() * 0.5;
     const playerBottomY = this.player.y + this.player.getHitboxHeight();
     for (const element of this.elements) {
+      if (element.behindPlayer !== behindPlayer) continue;
       if (
         element.x + element.w < camX ||
         element.x > camX + viewW ||
@@ -1376,6 +1439,25 @@ function makeSheet(
     frameH: canvas.height,
     fps,
   };
+}
+
+function makeSheetFromFrames(
+  frames: HTMLCanvasElement[],
+  fps: number,
+): SpriteSheet {
+  const frameCount = Math.max(1, frames.length);
+  const frameW = frames[0]?.width ?? 1;
+  const frameH = frames[0]?.height ?? 1;
+  const canvas = document.createElement("canvas");
+  canvas.width = frameW * frameCount;
+  canvas.height = frameH;
+  const ctx = canvas.getContext("2d")!;
+  for (let i = 0; i < frameCount; i++) {
+    const fr = frames[i];
+    if (!fr) continue;
+    ctx.drawImage(fr, i * frameW, 0, frameW, frameH);
+  }
+  return { canvas, frames: frameCount, frameW, frameH, fps };
 }
 
 function seededRand(seed: number): () => number {

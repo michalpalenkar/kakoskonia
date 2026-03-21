@@ -21,6 +21,11 @@ const FORWARD_JUMP_SPLIT = 0.5;
 const FORWARD_JUMP_CROUCH_FRAMES = 3;
 const LEDGE_ANIM_FRAMES = 11;
 const LEDGE_SPRITE_FACES_LEFT = false;
+const KICK_TOTAL_FRAMES = 14;
+const KICK_ACTIVE_START = 4;
+const KICK_ACTIVE_END = 9;
+const KICK_COOLDOWN_FRAMES = 10;
+const KICK_HEAVY_HOLD_FRAMES = 6;
 
 export class Player {
   x: number;
@@ -54,6 +59,9 @@ export class Player {
   private hitboxH = PLAYER_H;
   private ledgeTimer = 0;
   private ledgeTarget: { x: number; y: number } | null = null;
+  private kickTimer = 0;
+  private kickCooldown = 0;
+  private kickHitConsumed = false;
 
   sprites: Partial<Record<string, SpriteSheet>> = {};
 
@@ -87,6 +95,17 @@ export class Player {
         this.animTimer = 0;
       }
       return;
+    }
+
+    if (this.kickCooldown > 0) this.kickCooldown--;
+    if (this.kickTimer > 0) this.kickTimer--;
+    if (input.attackJustPressed && this.kickTimer === 0 && this.kickCooldown === 0) {
+      this.kickTimer = KICK_TOTAL_FRAMES;
+      this.kickCooldown = KICK_COOLDOWN_FRAMES;
+      this.kickHitConsumed = false;
+      this.animState = 'kick';
+      this.animFrame = 0;
+      this.animTimer = 0;
     }
 
     this.updateCrouchState(colliders);
@@ -128,6 +147,14 @@ export class Player {
     if (this.knockbackFrames > 0) {
       this.vx = this.knockbackVx;
       this.knockbackFrames--;
+    } else if (this.kickTimer > 0) {
+      // Kick movement: quick start, heavier finish.
+      const elapsed = KICK_TOTAL_FRAMES - this.kickTimer;
+      if (elapsed >= KICK_TOTAL_FRAMES - KICK_HEAVY_HOLD_FRAMES) {
+        this.vx *= 0.1;
+      } else {
+        this.vx *= 0.35;
+      }
     } else if (this.dashTimer > 0 && !this.inWater) {
       this.vx = this.dashDir * DASH_SPEED;
       this.facingLeft = this.dashDir < 0;
@@ -231,7 +258,9 @@ export class Player {
 
     // ── Animation state machine ────────────────────────────────────────────
     let newState: AnimState;
-    if (landedFromJump) {
+    if (this.kickTimer > 0) {
+      newState = 'kick';
+    } else if (landedFromJump) {
       newState = 'land';
     } else if (!this.grounded) {
       newState = this.vy < 0 ? 'jump' : 'fall';
@@ -297,6 +326,20 @@ export class Player {
           if (this.animFrame < landStart) this.animFrame = landStart;
           else if (this.animFrame < sheet.frames - 1) this.animFrame++;
           else this.animState = Math.abs(this.vx) > 0.1 ? 'run' : 'idle';
+        } else if (this.animState === 'kick') {
+          const frames = Math.max(1, sheet.frames);
+          const elapsed = KICK_TOTAL_FRAMES - this.kickTimer;
+          const holdStart = Math.max(0, KICK_TOTAL_FRAMES - KICK_HEAVY_HOLD_FRAMES);
+          if (elapsed >= holdStart) {
+            this.animFrame = frames - 1;
+          } else {
+            const progress = elapsed / Math.max(1, holdStart);
+            this.animFrame = Math.min(frames - 2, Math.floor(progress * Math.max(1, frames - 1)));
+          }
+          if (this.kickTimer <= 0) {
+            this.kickHitConsumed = false;
+            this.animState = this.grounded ? (Math.abs(this.vx) > 0.1 ? 'run' : 'idle') : 'fall';
+          }
         } else {
           // Loop: idle/run/jump cycle all frames continuously.
           this.animFrame = (this.animFrame + 1) % sheet.frames;
@@ -336,6 +379,9 @@ export class Player {
         this.y = r.y - this.hitboxH;
         this.grounded = true;
       } else {
+        // Allow squeezing through narrow 1-tile vertical gaps while rising.
+        // If crouch hitbox resolves the overlap, keep upward movement.
+        if (this.tryAutoCrouch(colliders, r) && !this.overlaps(r)) continue;
         this.y = r.y + r.h;
       }
       this.vy = 0;
@@ -477,6 +523,8 @@ export class Player {
     const sx = frame * sheet.frameW;
     const sizeMul = spriteKey === 'ledge'
       ? 1.2
+      : spriteKey === 'kick'
+        ? 1.18
       : (spriteKey === 'jumpVertical' || spriteKey === 'jumpForward' || spriteKey === 'fall') ? 1.3 : 1;
     const drawH = PLAYER_DRAW_H * sizeMul;
     const scale = drawH / sheet.frameH;
@@ -488,6 +536,10 @@ export class Player {
     const ledgeOffsetX = spriteKey === 'ledge' ? (this.facingLeft ? -dw * 0.2 : dw * 0.2) : 0;
     const landOffsetX = this.animState === 'land' ? (this.facingLeft ? 10 : -10) : 0;
     const centerX = screenX + this.hitboxW / 2 + ledgeOffsetX + landOffsetX;
+    const drawX = Math.round(centerX - dw / 2);
+    const drawY = Math.round(screenY);
+    const drawW = dw;
+    const drawHpx = dh;
 
     // Most sprites face LEFT by default.
     // Ledge sprite has its own authored facing direction.
@@ -495,16 +547,17 @@ export class Player {
     const shouldFlip = spriteFacesLeft ? !this.facingLeft : this.facingLeft;
 
     ctx.save();
+    // Keep outlines stable with snapped position while preserving smooth downscale.
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
     if (shouldFlip) {
-      ctx.translate(centerX, screenY);
+      ctx.translate(drawX + drawW, drawY);
       ctx.scale(-1, 1);
       ctx.drawImage(sheet.canvas, sx, 0, sheet.frameW, sheet.frameH,
-        -dw / 2, 0, dw, dh);
+        0, 0, drawW, drawHpx);
     } else {
       ctx.drawImage(sheet.canvas, sx, 0, sheet.frameW, sheet.frameH,
-        centerX - dw / 2, screenY, dw, dh);
+        drawX, drawY, drawW, drawHpx);
     }
     ctx.restore();
   }
@@ -519,6 +572,14 @@ export class Player {
     this.grounded = false;
   }
 
+  applyKickRecoil(direction: -1 | 1, horizontalSpeed: number, frames: number) {
+    this.knockbackVx = direction * Math.abs(horizontalSpeed);
+    this.knockbackFrames = Math.max(1, Math.floor(frames));
+    if (!this.grounded) {
+      this.vy = Math.min(this.vy, 0);
+    }
+  }
+
   getHitboxWidth() {
     return this.hitboxW;
   }
@@ -528,6 +589,7 @@ export class Player {
   }
 
   private getSpriteKeyForAnim(): string {
+    if (this.animState === 'kick') return 'kick';
     if (this.animState === 'ledge') return 'ledge';
     if (this.animState === 'land') return 'fall';
     if (this.animState === 'jump') return 'jumpForward';
@@ -555,5 +617,28 @@ export class Player {
   private getForwardJumpSplit(frames: number): number {
     if (frames <= 1) return 0;
     return Math.max(1, Math.min(frames - 1, Math.floor(frames * FORWARD_JUMP_SPLIT)));
+  }
+
+  isKickActive(): boolean {
+    const elapsed = KICK_TOTAL_FRAMES - this.kickTimer;
+    return elapsed >= KICK_ACTIVE_START && elapsed <= KICK_ACTIVE_END;
+  }
+
+  canConsumeKickHit(): boolean {
+    return this.isKickActive() && !this.kickHitConsumed;
+  }
+
+  consumeKickHit() {
+    this.kickHitConsumed = true;
+  }
+
+  getKickRect(): Rect {
+    const w = 56;
+    const h = 38;
+    const y = this.y + this.hitboxH * 0.42;
+    if (this.facingLeft) {
+      return { x: this.x - w + 8, y, w, h };
+    }
+    return { x: this.x + this.hitboxW - 8, y, w, h };
   }
 }
