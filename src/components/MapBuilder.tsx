@@ -7,6 +7,7 @@ import {
   type EnemyDefinition,
 } from '../game/enemyDefinitions';
 import { ELEMENT_ASSETS } from '../game/elementDefinitions';
+import { FOUNTAIN_ASSETS } from '../game/fountainDefinitions';
 import { computeElementTileRatio } from '../game/elementSizing';
 import {
   listLevels, loadLevel, saveLevel, saveAsLevel, deleteLevel,
@@ -25,9 +26,10 @@ const MIN_ROWS = 2;
 const PINCH_ZOOM_SENSITIVITY = 0.55;
 const PINCH_DEADZONE = 0.02;
 
-type Tool = 'tile' | 'player' | 'water' | 'enemy' | 'element';
+type Tool = 'tile' | 'player' | 'water' | 'enemy' | 'element' | 'fountain';
 type EnemyPlacement = { type: EnemyTypeId; col: number; row: number; damage: number; moving: boolean };
 type ElementPlacement = { id: string; col: number; row: number };
+type FountainPlacement = { id: string; col: number; row: number };
 type ElementDefinition = {
   id: string;
   label: string;
@@ -104,6 +106,7 @@ function exportLevelData(
   playerPos: { col: number; row: number } | null,
   enemies: EnemyPlacement[],
   elements: ElementPlacement[],
+  fountains: FountainPlacement[],
   cols: number,
   rows: number,
   bgPreset: string,
@@ -124,8 +127,8 @@ function exportLevelData(
 
   const lines = [
     `import { TILE_DSP } from '../AutoTile';`,
-    `import { z, e, el } from './levelTools';`,
-    `import type { TileZone, EnemyPlacement, LevelElement } from './levelTools';`,
+    `import { z, e, el, fn } from './levelTools';`,
+    `import type { TileZone, EnemyPlacement, LevelElement, FountainPlacement } from './levelTools';`,
     ``,
     `export const TILE_COLS = ${cols};`,
     `export const TILE_ROWS = ${rows};`,
@@ -178,6 +181,18 @@ function exportLevelData(
     );
   }
 
+  if (fountains.length > 0) {
+    const fountainStr = fountains
+      .map(f => `  fn('${f.id}', ${pad(f.col, 3)}, ${pad(f.row, 2)}),`)
+      .join('\n');
+    lines.push(
+      ``,
+      `export const FOUNTAINS: FountainPlacement[] = [`,
+      fountainStr,
+      `];`,
+    );
+  }
+
   return lines.join('\n');
 }
 
@@ -195,8 +210,10 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
   const playerRef = useRef<{ col: number; row: number } | null>(null);
   const enemiesRef = useRef<EnemyPlacement[]>([]);
   const elementsRef = useRef<ElementPlacement[]>([]);
+  const fountainsRef = useRef<FountainPlacement[]>([]);
   const enemyImagesRef = useRef<Record<EnemyTypeId, HTMLImageElement>>({} as Record<EnemyTypeId, HTMLImageElement>);
   const elementImagesRef = useRef<Record<string, HTMLImageElement>>({});
+  const fountainImagesRef = useRef<Record<string, HTMLImageElement>>({});
   const camRef = useRef({ panX: -T, panY: -T, zoom: 1 });
 
   const [tool, setTool] = useState<Tool>('tile');
@@ -206,6 +223,9 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
   const [elementDefs, setElementDefs] = useState<ElementDefinition[]>([]);
   const [selectedElementId, setSelectedElementId] = useState<string>('');
   const selectedElementRef = useRef<string>('');
+  const [fountainDefs, setFountainDefs] = useState<ElementDefinition[]>([]);
+  const [selectedFountainId, setSelectedFountainId] = useState<string>('');
+  const selectedFountainRef = useRef<string>('');
   const [hasPlayer, setHasPlayer] = useState(false);
   const [bgPreset, setBgPreset] = useState<string>('');
   const [bgmPreset, setBgmPreset] = useState<string>('');
@@ -372,6 +392,70 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     return true;
   }, [elementDefs]);
 
+  const getFountainAt = useCallback((col: number, row: number): number => {
+    for (let i = fountainsRef.current.length - 1; i >= 0; i--) {
+      const placed = fountainsRef.current[i];
+      const def = fountainDefs.find(d => d.id === placed.id);
+      if (!def) continue;
+      if (col >= placed.col && col < placed.col + def.tilesW && row >= placed.row && row < placed.row + def.tilesH) {
+        return i;
+      }
+    }
+    return -1;
+  }, [fountainDefs]);
+
+  const canPlaceFountain = useCallback((def: ElementDefinition, col: number, row: number, ignoreIndex = -1): boolean => {
+    const mapCols = colsRef.current;
+    const mapRows = rowsRef.current;
+    if (col < 0 || row < 0 || col + def.tilesW > mapCols || row + def.tilesH > mapRows) return false;
+
+    for (let r = row; r < row + def.tilesH; r++) {
+      for (let c = col; c < col + def.tilesW; c++) {
+        if (gridRef.current.has(key(c, r)) || waterRef.current.has(key(c, r))) return false;
+        const player = playerRef.current;
+        if (player && player.col === c && player.row === r) return false;
+      }
+    }
+
+    for (let i = 0; i < enemiesRef.current.length; i++) {
+      const enemy = enemiesRef.current[i];
+      const enemyDef = ENEMY_BY_ID[enemy.type];
+      const overlap =
+        col < enemy.col + enemyDef.tilesW &&
+        col + def.tilesW > enemy.col &&
+        row < enemy.row + enemyDef.tilesH &&
+        row + def.tilesH > enemy.row;
+      if (overlap) return false;
+    }
+
+    for (let i = 0; i < elementsRef.current.length; i++) {
+      const placed = elementsRef.current[i];
+      const placedDef = elementDefs.find(d => d.id === placed.id);
+      if (!placedDef) continue;
+      const overlap =
+        col < placed.col + placedDef.tilesW &&
+        col + def.tilesW > placed.col &&
+        row < placed.row + placedDef.tilesH &&
+        row + def.tilesH > placed.row;
+      if (overlap) return false;
+    }
+
+    for (let i = 0; i < fountainsRef.current.length; i++) {
+      if (i === ignoreIndex) continue;
+      const placed = fountainsRef.current[i];
+      const placedDef = fountainDefs.find(d => d.id === placed.id);
+      if (!placedDef) continue;
+      const overlap =
+        col < placed.col + placedDef.tilesW &&
+        col + def.tilesW > placed.col &&
+        row < placed.row + placedDef.tilesH &&
+        row + def.tilesH > placed.row;
+      if (overlap) return false;
+    }
+
+    return true;
+  }, [elementDefs, fountainDefs]);
+
   const canvasRect = () => canvasRef.current!.getBoundingClientRect();
 
   const resizeGrid = useCallback((nextCols: number, nextRows: number) => {
@@ -452,11 +536,23 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     }
     elementsRef.current = nextElements;
 
+    const nextFountains: FountainPlacement[] = [];
+    for (let i = 0; i < fountainsRef.current.length; i++) {
+      const fountain = fountainsRef.current[i];
+      const def = fountainDefs.find(d => d.id === fountain.id);
+      if (!def) continue;
+      if (fountain.col < 0 || fountain.row < 0) continue;
+      if (fountain.col + def.tilesW > safeCols || fountain.row + def.tilesH > safeRows) continue;
+      if (!canPlaceFountain(def, fountain.col, fountain.row, i)) continue;
+      nextFountains.push(fountain);
+    }
+    fountainsRef.current = nextFountains;
+
     colsRef.current = safeCols;
     rowsRef.current = safeRows;
     setCols(safeCols);
     setRows(safeRows);
-  }, [canPlaceElement, elementDefs]);
+  }, [canPlaceElement, canPlaceFountain, elementDefs, fountainDefs]);
 
   // ── render ────────────────────────────────────────────────────────────────
 
@@ -628,6 +724,53 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       }
     }
 
+    // fountains
+    for (let i = 0; i < fountainsRef.current.length; i++) {
+      const fountain = fountainsRef.current[i];
+      const def = fountainDefs.find(d => d.id === fountain.id);
+      if (!def) continue;
+      const fx = fountain.col * T - panX;
+      const fy = fountain.row * T - panY;
+      const fw = def.ratioW * T;
+      const fh = def.ratioH * T;
+      const img = fountainImagesRef.current[fountain.id];
+      if (img) {
+        ctx.drawImage(img, fx, fy, fw, fh);
+      } else {
+        ctx.fillStyle = 'rgba(100, 160, 220, 0.55)';
+        ctx.fillRect(fx, fy, fw, fh);
+      }
+      ctx.strokeStyle = 'rgba(120, 180, 240, 0.85)';
+      ctx.lineWidth = 1.5 / zoom;
+      ctx.strokeRect(fx, fy, fw, fh);
+    }
+
+    // fountain placement preview
+    if (toolRef.current === 'fountain' && hoverGridRef.current.inside && selectedFountainRef.current) {
+      const def = fountainDefs.find(d => d.id === selectedFountainRef.current);
+      if (def) {
+        const { col, row } = hoverGridRef.current;
+        const valid = canPlaceFountain(def, col, row);
+        const px = col * T - panX;
+        const py = row * T - panY;
+        const pw = def.ratioW * T;
+        const ph = def.ratioH * T;
+        const previewImg = fountainImagesRef.current[def.id];
+        if (previewImg) {
+          ctx.save();
+          ctx.globalAlpha = valid ? 0.8 : 0.55;
+          ctx.drawImage(previewImg, px, py, pw, ph);
+          ctx.restore();
+        } else {
+          ctx.fillStyle = valid ? 'rgba(90, 160, 230, 0.45)' : 'rgba(220, 70, 70, 0.7)';
+          ctx.fillRect(px, py, pw, ph);
+        }
+        ctx.strokeStyle = valid ? 'rgba(120, 180, 255, 0.95)' : 'rgba(255, 90, 90, 0.95)';
+        ctx.lineWidth = 2 / zoom;
+        ctx.strokeRect(px, py, pw, ph);
+      }
+    }
+
     // player marker
     const pp = playerRef.current;
     if (pp) {
@@ -666,7 +809,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     ctx.restore();
 
     ctx.restore();
-  }, [canPlaceElement, canPlaceEnemy, elementDefs]);
+  }, [canPlaceElement, canPlaceEnemy, canPlaceFountain, elementDefs, fountainDefs]);
 
   // RAF loop
   useEffect(() => {
@@ -731,6 +874,37 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       }
     });
 
+    Promise.all(
+      FOUNTAIN_ASSETS.map(asset => new Promise<ElementDefinition>((resolve) => {
+        const fountainImg = new Image();
+        fountainImg.src = asset.url;
+        fountainImg.onload = () => {
+          fountainImagesRef.current[asset.id] = fountainImg;
+          const rawW = fountainImg.naturalWidth / 128;
+          const rawH = fountainImg.naturalHeight / 128;
+          resolve({
+            id: asset.id,
+            label: asset.label,
+            filename: asset.filename,
+            url: asset.url,
+            widthPx: fountainImg.naturalWidth,
+            heightPx: fountainImg.naturalHeight,
+            ratioW: rawW,
+            ratioH: rawH,
+            tilesW: Math.max(1, Math.ceil(rawW)),
+            tilesH: Math.max(1, Math.ceil(rawH)),
+          });
+        };
+      })),
+    ).then(defs => {
+      const sorted = defs.sort((a, b) => a.label.localeCompare(b.label));
+      setFountainDefs(sorted);
+      if (sorted.length > 0) {
+        setSelectedFountainId(sorted[0].id);
+        selectedFountainRef.current = sorted[0].id;
+      }
+    });
+
     return () => window.removeEventListener('resize', resize);
   }, []);
 
@@ -760,7 +934,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
   };
 
   const startDrag = (col: number, row: number) => {
-    if (toolRef.current === 'enemy' || toolRef.current === 'element') return;
+    if (toolRef.current === 'enemy' || toolRef.current === 'element' || toolRef.current === 'fountain') return;
     if (toolRef.current === 'water') {
       const mode = isWaterCell(col, row) && !isEdge(col, row, colsRef.current, rowsRef.current) ? 'remove' : 'place';
       dragRef.current = { active: true, mode, lastCol: col, lastRow: row };
@@ -773,7 +947,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
   };
 
   const continueDrag = (col: number, row: number) => {
-    if (toolRef.current === 'enemy' || toolRef.current === 'element') return;
+    if (toolRef.current === 'enemy' || toolRef.current === 'element' || toolRef.current === 'fountain') return;
     const d = dragRef.current;
     if (!d.active || (col === d.lastCol && row === d.lastRow)) return;
     d.lastCol = col; d.lastRow = row;
@@ -808,6 +982,22 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     if (!def) return;
     if (!canPlaceElement(def, col, row)) return;
     elementsRef.current.push({
+      id: def.id,
+      col,
+      row,
+    });
+  };
+
+  const placeOrRemoveFountain = (col: number, row: number) => {
+    const existingIndex = getFountainAt(col, row);
+    if (existingIndex >= 0) {
+      fountainsRef.current.splice(existingIndex, 1);
+      return;
+    }
+    const def = fountainDefs.find(d => d.id === selectedFountainRef.current);
+    if (!def) return;
+    if (!canPlaceFountain(def, col, row)) return;
+    fountainsRef.current.push({
       id: def.id,
       col,
       row,
@@ -895,6 +1085,10 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     }
     if (toolRef.current === 'element') {
       placeOrRemoveElement(col, row);
+      return;
+    }
+    if (toolRef.current === 'fountain') {
+      placeOrRemoveFountain(col, row);
       return;
     }
     startDrag(col, row);
@@ -1013,6 +1207,10 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
         placeOrRemoveElement(col, row);
         return;
       }
+      if (toolRef.current === 'fountain') {
+        placeOrRemoveFountain(col, row);
+        return;
+      }
       startDrag(col, row);
     }
   };
@@ -1109,6 +1307,8 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       }));
     elementsRef.current = (data.elements ?? [])
       .map(element => ({ id: element.id, col: element.col, row: element.row }));
+    fountainsRef.current = ((data as any).fountains ?? [])
+      .map((f: any) => ({ id: f.id, col: f.col, row: f.row }));
     playerRef.current = { col: data.spawnCol, row: data.spawnRow - 1 };
     setHasPlayer(true);
     colsRef.current = data.cols;
@@ -1134,6 +1334,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     waterRef.current = new Set();
     enemiesRef.current = [];
     elementsRef.current = [];
+    fountainsRef.current = [];
     setBgPreset('');
     setBgmPreset('');
     setTilePreset(DEFAULT_TILE_PRESET);
@@ -1186,6 +1387,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
         playerRef.current,
         enemiesRef.current,
         elementsRef.current,
+        fountainsRef.current,
         colsRef.current,
         rowsRef.current,
         bgPreset,
@@ -1214,6 +1416,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
         playerRef.current,
         enemiesRef.current,
         elementsRef.current,
+        fountainsRef.current,
         colsRef.current,
         rowsRef.current,
         bgPreset,
@@ -1235,6 +1438,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     waterRef.current = new Set();
     enemiesRef.current = [];
     elementsRef.current = [];
+    fountainsRef.current = [];
     playerRef.current = { col: playerCol, row: playerRow };
     setHasPlayer(true);
     showStatus('Generated random level');
@@ -1280,6 +1484,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       waterZones,
       enemies: enemiesRef.current,
       elements: elementsRef.current,
+      fountains: fountainsRef.current,
       ...(bgPreset ? { bgPreset } : {}),
       ...(bgmPreset ? { bgmPreset } : {}),
       ...(tilePreset ? { tilePreset } : {}),
@@ -1307,7 +1512,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     <div style={{ position: 'relative', width: '100vw', height: '100vh', overflow: 'hidden' }}>
       <canvas
         ref={canvasRef}
-        style={{ display: 'block', cursor: tool === 'player' || tool === 'enemy' || tool === 'element' ? 'crosshair' : 'cell', touchAction: 'none' } as React.CSSProperties}
+        style={{ display: 'block', cursor: tool === 'player' || tool === 'enemy' || tool === 'element' || tool === 'fountain' ? 'crosshair' : 'cell', touchAction: 'none' } as React.CSSProperties}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -1372,18 +1577,11 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ color: '#888', fontSize: 11, fontFamily: 'monospace' }}>TOOL</span>
-        {(['tile', 'water', 'player', 'enemy', 'element'] as Tool[]).map(t => {
-          const label = t === 'tile'
-            ? 'Tile'
-            : t === 'water'
-              ? 'Water'
-              : t === 'player'
-                ? 'Player'
-                : t === 'enemy'
-                  ? 'Enemies'
-                  : 'Elements';
-          const activeBg = t === 'water' ? '#1a5f9c' : t === 'enemy' ? '#7b2b47' : t === 'element' ? '#2f7a4a' : '#3a5fc8';
-          const activeBorder = t === 'water' ? '#3a9fe8' : t === 'enemy' ? '#c85a7b' : t === 'element' ? '#65c992' : '#5a7fe8';
+        {(['tile', 'water', 'player', 'enemy', 'element', 'fountain'] as Tool[]).map(t => {
+          const labels: Record<Tool, string> = { tile: 'Tile', water: 'Water', player: 'Player', enemy: 'Enemies', element: 'Elements', fountain: 'Fountains' };
+          const label = labels[t];
+          const activeBg = t === 'water' ? '#1a5f9c' : t === 'enemy' ? '#7b2b47' : t === 'element' ? '#2f7a4a' : t === 'fountain' ? '#2b5a7b' : '#3a5fc8';
+          const activeBorder = t === 'water' ? '#3a9fe8' : t === 'enemy' ? '#c85a7b' : t === 'element' ? '#65c992' : t === 'fountain' ? '#5a9ac8' : '#5a7fe8';
           return (
             <button
               key={t}
@@ -1461,6 +1659,38 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
               {elementDefs.map(def => (
                 <option key={def.id} value={def.id}>
                   {def.filename} | {formatRatio(def.ratioW)}x{formatRatio(def.ratioH)}
+                </option>
+              ))}
+            </select>
+            <span style={{ color: '#777', fontSize: 11, fontFamily: 'monospace' }}>
+              Click to place/remove
+            </span>
+          </div>
+        )}
+        {tool === 'fountain' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
+            <span style={{ color: '#888', fontSize: 11, fontFamily: 'monospace' }}>FOUNTAIN</span>
+            <select
+              value={selectedFountainId}
+              onChange={e => {
+                setSelectedFountainId(e.target.value);
+                selectedFountainRef.current = e.target.value;
+              }}
+              style={{
+                minWidth: 270,
+                padding: '4px 8px',
+                background: 'rgba(40,40,60,0.8)',
+                color: '#ccc',
+                border: '1px solid #3a3a55',
+                borderRadius: 6,
+                fontSize: 11,
+                fontFamily: 'monospace',
+                outline: 'none',
+              }}
+            >
+              {fountainDefs.map(def => (
+                <option key={def.id} value={def.id}>
+                  {def.filename} | {def.tilesW}x{def.tilesH} tiles
                 </option>
               ))}
             </select>

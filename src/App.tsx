@@ -15,7 +15,10 @@ function getPlayParam(): LevelData | null {
   } catch { return null }
 }
 
-type Screen = { type: 'menu' } | { type: 'game'; level: LevelData } | { type: 'mapBuilder' }
+type Screen =
+  | { type: 'menu' }
+  | { type: 'game'; level: LevelData; savedX?: number; savedY?: number; savedHealth?: number }
+  | { type: 'mapBuilder' }
 
 const isPlayTest = !!getPlayParam()
 
@@ -31,12 +34,22 @@ function App() {
   }
 
   if (screen.type === 'game') {
-    return <GameCanvas level={screen.level} onBack={isPlayTest ? undefined : () => setScreen({ type: 'menu' })} />
+    return (
+      <GameCanvas
+        level={screen.level}
+        savedX={screen.savedX}
+        savedY={screen.savedY}
+        savedHealth={screen.savedHealth}
+        onBack={isPlayTest ? undefined : () => setScreen({ type: 'menu' })}
+      />
+    )
   }
 
   return (
     <GameMenu
-      onPlay={(level) => setScreen({ type: 'game', level })}
+      onPlay={(level, savedX, savedY, savedHealth) =>
+        setScreen({ type: 'game', level, savedX, savedY, savedHealth })
+      }
       onMapBuilder={IS_DEV ? () => setScreen({ type: 'mapBuilder' }) : undefined}
     />
   )

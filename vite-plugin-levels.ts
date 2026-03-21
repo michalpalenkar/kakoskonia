@@ -75,6 +75,18 @@ function parseElementsBlock(content: string): { id: string; col: number; row: nu
   return elements;
 }
 
+function parseFountainsBlock(content: string): { id: string; col: number; row: number }[] {
+  const block = extractArrayBlock(content, 'FOUNTAINS');
+  if (!block) return [];
+  const fountains: { id: string; col: number; row: number }[] = [];
+  const fountainRegex = /fn\(\s*'([^']+)'\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/g;
+  let m: RegExpExecArray | null = null;
+  while ((m = fountainRegex.exec(block)) !== null) {
+    fountains.push({ id: m[1], col: +m[2], row: +m[3] });
+  }
+  return fountains;
+}
+
 function parseLevelFile(filename: string): {
   name: string;
   cols: number;
@@ -88,6 +100,7 @@ function parseLevelFile(filename: string): {
   tilePreset?: string;
   enemies?: { type: string; col: number; row: number; damage: number; moving: boolean }[];
   elements?: { id: string; col: number; row: number }[];
+  fountains?: { id: string; col: number; row: number }[];
 } | null {
   const filepath = join(LEVELS_DIR, `${filename}.ts`);
   if (!existsSync(filepath)) return null;
@@ -104,6 +117,7 @@ function parseLevelFile(filename: string): {
   const waterZones = parseZoneBlock(content, 'WATER_ZONES');
   const enemies = parseEnemiesBlock(content);
   const elements = parseElementsBlock(content);
+  const fountains = parseFountainsBlock(content);
   const bgPresetMatch = content.match(/BG_PRESET\s*=\s*'([^']+)'/);
   const bgmPresetMatch = content.match(/BGM_PRESET\s*=\s*'([^']+)'/);
   const tilePresetMatch = content.match(/TILE_PRESET\s*=\s*'([^']+)'/);
@@ -121,6 +135,7 @@ function parseLevelFile(filename: string): {
     ...(tilePresetMatch ? { tilePreset: tilePresetMatch[1] } : {}),
     ...(enemies.length ? { enemies } : {}),
     ...(elements.length ? { elements } : {}),
+    ...(fountains.length ? { fountains } : {}),
   };
 }
 
@@ -130,12 +145,12 @@ function rebuildIndex() {
   const entries = files
     .map((f, i) => {
       const displayName = f.replace(/([a-z])(\d)/g, '$1 $2').replace(/^./, s => s.toUpperCase()).replace(/_/g, ' ');
-      return `  {\n    id: ${i + 1},\n    name: '${displayName}',\n    cols: ${f}.TILE_COLS,\n    rows: ${f}.TILE_ROWS,\n    spawnX: ${f}.SPAWN_X,\n    spawnY: ${f}.SPAWN_Y,\n    zones: ${f}.LEVEL_ZONES,\n    waterZones: (${f} as any).WATER_ZONES ?? [],\n    bgPreset: (${f} as any).BG_PRESET ?? undefined,\n    bgmPreset: (${f} as any).BGM_PRESET ?? undefined,\n    tilePreset: (${f} as any).TILE_PRESET ?? undefined,\n    enemies: (${f} as any).ENEMIES ?? [],\n    elements: (${f} as any).ELEMENTS ?? [],\n  },`;
+      return `  {\n    id: ${i + 1},\n    name: '${displayName}',\n    cols: ${f}.TILE_COLS,\n    rows: ${f}.TILE_ROWS,\n    spawnX: ${f}.SPAWN_X,\n    spawnY: ${f}.SPAWN_Y,\n    zones: ${f}.LEVEL_ZONES,\n    waterZones: (${f} as any).WATER_ZONES ?? [],\n    bgPreset: (${f} as any).BG_PRESET ?? undefined,\n    bgmPreset: (${f} as any).BGM_PRESET ?? undefined,\n    tilePreset: (${f} as any).TILE_PRESET ?? undefined,\n    enemies: (${f} as any).ENEMIES ?? [],\n    elements: (${f} as any).ELEMENTS ?? [],\n    fountains: (${f} as any).FOUNTAINS ?? [],\n  },`;
     })
     .join('\n');
 
   const content = `import type { TileZone } from '../TileMap';
-import type { EnemyPlacement, LevelElement } from './levelTools';
+import type { EnemyPlacement, LevelElement, FountainPlacement } from './levelTools';
 ${imports}
 
 export interface LevelData {
@@ -152,6 +167,7 @@ export interface LevelData {
   tilePreset?: string;
   enemies?: EnemyPlacement[];
   elements?: LevelElement[];
+  fountains?: FountainPlacement[];
 }
 
 export const LEVELS: LevelData[] = [
