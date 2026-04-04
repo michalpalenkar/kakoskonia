@@ -1,4 +1,5 @@
 export interface LevelInfo {
+  id: string;
   filename: string;
   name: string;
   cols: number;
@@ -13,6 +14,7 @@ export interface LevelInfo {
   enemies?: { type: string; col: number; row: number; damage: number; moving: boolean }[];
   elements?: { id: string; col: number; row: number }[];
   fountains?: { id: string; col: number; row: number }[];
+  gates?: { col: number; row: number; w: number; h: number; targetLevelId: string }[];
 }
 
 export async function listLevels(): Promise<LevelInfo[]> {

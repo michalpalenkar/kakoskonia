@@ -8,6 +8,7 @@ interface Props {
   savedY?: number;
   savedHealth?: number;
   onBack?: () => void;
+  onGateTransition?: (targetLevelId: string, entrySide: 'left' | 'right' | 'top' | 'bottom') => void;
 }
 
 const KEYBOARD_HINTS = [
@@ -19,7 +20,7 @@ const KEYBOARD_HINTS = [
   { key: "ESC", action: "Back to menu" },
 ];
 
-export function GameCanvas({ level, savedX, savedY, savedHealth, onBack }: Props) {
+export function GameCanvas({ level, savedX, savedY, savedHealth, onBack, onGateTransition }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<Game | null>(null);
   const [hintsOpen, setHintsOpen] = useState(false);
@@ -31,7 +32,7 @@ export function GameCanvas({ level, savedX, savedY, savedHealth, onBack }: Props
     if (!canvas) return;
 
     setGameOverMessage(null);
-    const game = new Game(canvas, level, { onGameOver: setGameOverMessage }, savedX, savedY, savedHealth);
+    const game = new Game(canvas, level, { onGameOver: setGameOverMessage, onGateTransition }, savedX, savedY, savedHealth);
     gameRef.current = game;
     let cancelled = false;
 

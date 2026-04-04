@@ -9,7 +9,7 @@ import {
   loadSpriteTransparentDark,
 } from "./spriteUtils";
 import type { InputState, SpriteSheet } from "./types";
-import type { LevelData } from "./levels";
+import { LEVELS, type LevelData } from "./levels";
 import { ENEMY_BY_ID, type EnemyTypeId } from "./enemyDefinitions";
 import { ELEMENT_ASSETS } from "./elementDefinitions";
 import { FOUNTAIN_ASSETS } from "./fountainDefinitions";
@@ -97,6 +97,7 @@ type HusenicaImageKey = keyof typeof HUSENICA_URLS;
 /** Camera zoom — 1.25× makes the player appear 25% larger */
 const ZOOM = 1.25;
 const FIXED_DT = 1 / 60;
+const GATE_ENTRY_COOLDOWN_FRAMES = 30;
 const REACTIVE_PLANTS = new Set([
   "mysi chvost",
   "pupava",
@@ -168,8 +169,17 @@ interface AlphaMask {
   rgba: Uint8ClampedArray;
 }
 
+interface GateTransition {
+  targetLevelId: string;
+  targetLevelName: string;
+  phase: 'fade_out' | 'show_name' | 'done';
+  alpha: number;
+  nameTimer: number;
+}
+
 interface GameHooks {
   onGameOver?: (message: string) => void;
+  onGateTransition?: (targetLevelId: string, entrySide: 'left' | 'right' | 'top' | 'bottom') => void;
 }
 
 export class Game {
@@ -205,6 +215,8 @@ export class Game {
   private shakeFrames = 0;
   private shakeMagnitude = 0;
   private skyClouds: SkyCloud[] = [];
+  private gateTransition: GateTransition | null = null;
+  private gateEntryCooldown = 0;
 
   private keys: Record<string, boolean> = {};
   private prevJump = false;
@@ -252,6 +264,9 @@ export class Game {
     const startX = savedX ?? level.spawnX;
     const startY = savedY ?? (level.spawnY - PLAYER_H);
     this.player = new Player(startX, startY);
+    if (savedX != null || savedY != null) {
+      this.gateEntryCooldown = GATE_ENTRY_COOLDOWN_FRAMES;
+    }
     if (savedHealth != null) {
       this.player.health = savedHealth;
     }
@@ -502,6 +517,8 @@ export class Game {
         this.applyKickDamageToEnemies();
         this.applyEnemyDamageToPlayer();
         this.updateFountains();
+        if (this.gateEntryCooldown > 0) this.gateEntryCooldown--;
+        this.checkGates();
         this.camera.update(
           this.player.x,
           this.player.y,
@@ -514,6 +531,7 @@ export class Game {
           worldH,
         );
       }
+      this.updateGateTransition();
       if (this.shakeFrames > 0) this.shakeFrames--;
       this.accumulator -= FIXED_DT;
     }
@@ -613,6 +631,7 @@ export class Game {
     ctx.restore();
 
     this.drawHealthBar();
+    this.drawGateTransition();
   }
 
   // Source rects from health-bar.png (332×199)
@@ -1467,6 +1486,91 @@ export class Game {
         health: this.player.maxHealth,
       });
     }
+  }
+
+  private checkGates() {
+    if (this.gateTransition || this.gateEntryCooldown > 0) return;
+    const gates = this.level.gates ?? [];
+    if (gates.length === 0) return;
+
+    const px = this.player.x;
+    const py = this.player.y;
+    const pw = this.player.getHitboxWidth();
+    const ph = this.player.getHitboxHeight();
+
+    for (const gate of gates) {
+      if (!gate.targetLevelId) continue;
+      const gx = gate.col * TILE_SIZE;
+      const gy = gate.row * TILE_SIZE;
+      const gw = gate.w * TILE_SIZE;
+      const gh = gate.h * TILE_SIZE;
+
+      // AABB overlap check
+      if (px < gx + gw && px + pw > gx && py < gy + gh && py + ph > gy) {
+        const targetLevel = LEVELS.find(l => l.id === gate.targetLevelId);
+        const targetName = targetLevel?.name ?? 'Unknown';
+
+        // Determine which side of this level the gate is on
+        const isHorizontal = gate.w >= gate.h;
+        let entrySide: 'left' | 'right' | 'top' | 'bottom';
+        if (isHorizontal) {
+          entrySide = gate.row <= this.level.rows / 2 ? 'top' : 'bottom';
+        } else {
+          entrySide = gate.col <= this.level.cols / 2 ? 'left' : 'right';
+        }
+
+        this.gateTransition = {
+          targetLevelId: gate.targetLevelId,
+          targetLevelName: targetName,
+          phase: 'fade_out',
+          alpha: 0,
+          nameTimer: 0,
+        };
+        // Store entry side for the callback
+        (this.gateTransition as any)._entrySide = entrySide;
+        return;
+      }
+    }
+  }
+
+  private updateGateTransition() {
+    const gt = this.gateTransition;
+    if (!gt) return;
+
+    if (gt.phase === 'fade_out') {
+      gt.alpha = Math.min(1, gt.alpha + 0.06);
+      if (gt.alpha >= 1) {
+        gt.phase = 'show_name';
+        gt.nameTimer = 0;
+      }
+    } else if (gt.phase === 'show_name') {
+      gt.nameTimer++;
+      if (gt.nameTimer >= 45) { // ~0.75 seconds
+        gt.phase = 'done';
+        const entrySide = (gt as any)._entrySide as 'left' | 'right' | 'top' | 'bottom';
+        this.hooks.onGateTransition?.(gt.targetLevelId, entrySide);
+      }
+    }
+  }
+
+  private drawGateTransition() {
+    const gt = this.gateTransition;
+    if (!gt) return;
+
+    const { ctx } = this;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = `rgba(0, 0, 0, ${gt.alpha})`;
+    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+    if (gt.phase === 'show_name' || gt.phase === 'done') {
+      ctx.fillStyle = `rgba(220, 200, 255, ${Math.min(1, gt.nameTimer / 10)})`;
+      ctx.font = 'bold 36px monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(gt.targetLevelName, this.canvas.width / 2, this.canvas.height / 2);
+    }
+    ctx.restore();
   }
 
   private drawFountains(

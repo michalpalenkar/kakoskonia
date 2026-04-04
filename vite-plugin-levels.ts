@@ -87,7 +87,20 @@ function parseFountainsBlock(content: string): { id: string; col: number; row: n
   return fountains;
 }
 
+function parseGatesBlock(content: string): { col: number; row: number; w: number; h: number; targetLevelId: string }[] {
+  const block = extractArrayBlock(content, 'GATES');
+  if (!block) return [];
+  const gates: { col: number; row: number; w: number; h: number; targetLevelId: string }[] = [];
+  const gateRegex = /gt\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*'([^']+)'\s*\)/g;
+  let m: RegExpExecArray | null = null;
+  while ((m = gateRegex.exec(block)) !== null) {
+    gates.push({ col: +m[1], row: +m[2], w: +m[3], h: +m[4], targetLevelId: m[5] });
+  }
+  return gates;
+}
+
 function parseLevelFile(filename: string): {
+  id: string;
   name: string;
   cols: number;
   rows: number;
@@ -101,6 +114,7 @@ function parseLevelFile(filename: string): {
   enemies?: { type: string; col: number; row: number; damage: number; moving: boolean }[];
   elements?: { id: string; col: number; row: number }[];
   fountains?: { id: string; col: number; row: number }[];
+  gates?: { col: number; row: number; w: number; h: number; targetLevelId: string }[];
 } | null {
   const filepath = join(LEVELS_DIR, `${filename}.ts`);
   if (!existsSync(filepath)) return null;
@@ -108,6 +122,7 @@ function parseLevelFile(filename: string): {
 
   const colsMatch = content.match(/TILE_COLS\s*=\s*(\d+)/);
   const rowsMatch = content.match(/TILE_ROWS\s*=\s*(\d+)/);
+  const levelIdMatch = content.match(/LEVEL_ID\s*=\s*'([^']+)'/);
   const spawnXMatch = content.match(/SPAWN_X\s*=\s*(\d+)\s*\*\s*TILE_DSP/);
   const spawnYMatch = content.match(/SPAWN_Y\s*=\s*(\d+)\s*\*\s*TILE_DSP/);
 
@@ -118,11 +133,13 @@ function parseLevelFile(filename: string): {
   const enemies = parseEnemiesBlock(content);
   const elements = parseElementsBlock(content);
   const fountains = parseFountainsBlock(content);
+  const gates = parseGatesBlock(content);
   const bgPresetMatch = content.match(/BG_PRESET\s*=\s*'([^']+)'/);
   const bgmPresetMatch = content.match(/BGM_PRESET\s*=\s*'([^']+)'/);
   const tilePresetMatch = content.match(/TILE_PRESET\s*=\s*'([^']+)'/);
 
   return {
+    id: levelIdMatch?.[1] ?? filename,
     name: filename,
     cols: +colsMatch[1],
     rows: +rowsMatch[1],
@@ -136,6 +153,7 @@ function parseLevelFile(filename: string): {
     ...(enemies.length ? { enemies } : {}),
     ...(elements.length ? { elements } : {}),
     ...(fountains.length ? { fountains } : {}),
+    ...(gates.length ? { gates } : {}),
   };
 }
 
@@ -145,16 +163,16 @@ function rebuildIndex() {
   const entries = files
     .map((f, i) => {
       const displayName = f.replace(/([a-z])(\d)/g, '$1 $2').replace(/^./, s => s.toUpperCase()).replace(/_/g, ' ');
-      return `  {\n    id: ${i + 1},\n    name: '${displayName}',\n    cols: ${f}.TILE_COLS,\n    rows: ${f}.TILE_ROWS,\n    spawnX: ${f}.SPAWN_X,\n    spawnY: ${f}.SPAWN_Y,\n    zones: ${f}.LEVEL_ZONES,\n    waterZones: (${f} as any).WATER_ZONES ?? [],\n    bgPreset: (${f} as any).BG_PRESET ?? undefined,\n    bgmPreset: (${f} as any).BGM_PRESET ?? undefined,\n    tilePreset: (${f} as any).TILE_PRESET ?? undefined,\n    enemies: (${f} as any).ENEMIES ?? [],\n    elements: (${f} as any).ELEMENTS ?? [],\n    fountains: (${f} as any).FOUNTAINS ?? [],\n  },`;
+      return `  defineLevel(${f} as LevelModule, '${f}', '${displayName}'),`;
     })
     .join('\n');
 
   const content = `import type { TileZone } from '../TileMap';
-import type { EnemyPlacement, LevelElement, FountainPlacement } from './levelTools';
+import type { EnemyPlacement, LevelElement, FountainPlacement, GateZone } from './levelTools';
 ${imports}
 
 export interface LevelData {
-  id: number;
+  id: string;
   name: string;
   cols: number;
   rows: number;
@@ -168,6 +186,44 @@ export interface LevelData {
   enemies?: EnemyPlacement[];
   elements?: LevelElement[];
   fountains?: FountainPlacement[];
+  gates?: GateZone[];
+}
+
+type LevelModule = {
+  LEVEL_ID?: string;
+  TILE_COLS: number;
+  TILE_ROWS: number;
+  SPAWN_X: number;
+  SPAWN_Y: number;
+  LEVEL_ZONES: TileZone[];
+  WATER_ZONES?: TileZone[];
+  BG_PRESET?: string;
+  BGM_PRESET?: string;
+  TILE_PRESET?: string;
+  ENEMIES?: EnemyPlacement[];
+  ELEMENTS?: LevelElement[];
+  FOUNTAINS?: FountainPlacement[];
+  GATES?: GateZone[];
+};
+
+function defineLevel(level: LevelModule, fallbackId: string, name: string): LevelData {
+  return {
+    id: level.LEVEL_ID ?? fallbackId,
+    name,
+    cols: level.TILE_COLS,
+    rows: level.TILE_ROWS,
+    spawnX: level.SPAWN_X,
+    spawnY: level.SPAWN_Y,
+    zones: level.LEVEL_ZONES,
+    waterZones: level.WATER_ZONES ?? [],
+    bgPreset: level.BG_PRESET ?? undefined,
+    bgmPreset: level.BGM_PRESET ?? undefined,
+    tilePreset: level.TILE_PRESET ?? undefined,
+    enemies: level.ENEMIES ?? [],
+    elements: level.ELEMENTS ?? [],
+    fountains: level.FOUNTAINS ?? [],
+    gates: level.GATES ?? [],
+  };
 }
 
 export const LEVELS: LevelData[] = [
@@ -189,7 +245,7 @@ export default function levelsPlugin(): Plugin {
           const files = getLevelFiles();
           const levels = files.map(f => {
             const data = parseLevelFile(f);
-            return { filename: f, ...(data || { cols: 0, rows: 0, zones: [] }) };
+            return { filename: f, ...(data || { id: f, cols: 0, rows: 0, zones: [] }) };
           });
           res.end(JSON.stringify(levels));
           return;
@@ -202,7 +258,7 @@ export default function levelsPlugin(): Plugin {
           if (!name) { res.statusCode = 400; res.end('{"error":"name required"}'); return; }
           const data = parseLevelFile(name);
           if (!data) { res.statusCode = 404; res.end('{"error":"not found"}'); return; }
-          res.end(JSON.stringify(data));
+          res.end(JSON.stringify({ filename: name, ...data }));
           return;
         }
 

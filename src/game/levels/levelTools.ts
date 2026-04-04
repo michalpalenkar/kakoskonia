@@ -49,3 +49,20 @@ export const fn = (
   col: number,
   row: number,
 ): FountainPlacement => ({ id, col, row });
+
+export interface GateZone {
+  col: number;
+  row: number;
+  w: number;
+  h: number;
+  targetLevelId: string;
+}
+
+/** Shorthand constructor for gate zone. */
+export const gt = (
+  col: number,
+  row: number,
+  w: number,
+  h: number,
+  targetLevelId: string,
+): GateZone => ({ col, row, w, h, targetLevelId });

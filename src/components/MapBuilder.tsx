@@ -18,6 +18,7 @@ import {
   TILE_PRESET_OPTIONS,
   resolveTilePresetUrl,
 } from '../game/tilePresets';
+import { LEVELS } from '../game/levels';
 
 const DEFAULT_COLS = 100;
 const DEFAULT_ROWS = 23;
@@ -26,10 +27,27 @@ const MIN_ROWS = 2;
 const PINCH_ZOOM_SENSITIVITY = 0.55;
 const PINCH_DEADZONE = 0.02;
 
-type Tool = 'tile' | 'player' | 'water' | 'enemy' | 'element' | 'fountain';
+type Tool = 'tile' | 'player' | 'water' | 'enemy' | 'element' | 'fountain' | 'gate';
 type EnemyPlacement = { type: EnemyTypeId; col: number; row: number; damage: number; moving: boolean };
 type ElementPlacement = { id: string; col: number; row: number };
 type FountainPlacement = { id: string; col: number; row: number };
+type GatePlacement = { col: number; row: number; w: number; h: number; targetLevelId: string };
+
+/** Determine which side of the level a gate occupies based on its position. */
+function getGateSide(gate: GatePlacement, cols: number, rows: number): 'left' | 'right' | 'top' | 'bottom' {
+  if (gate.w >= gate.h) {
+    // horizontal gate
+    return gate.row <= rows / 2 ? 'top' : 'bottom';
+  } else {
+    // vertical gate
+    return gate.col <= cols / 2 ? 'left' : 'right';
+  }
+}
+
+function oppositeSide(side: 'left' | 'right' | 'top' | 'bottom'): 'left' | 'right' | 'top' | 'bottom' {
+  const map = { left: 'right', right: 'left', top: 'bottom', bottom: 'top' } as const;
+  return map[side];
+}
 type ElementDefinition = {
   id: string;
   label: string;
@@ -107,8 +125,10 @@ function exportLevelData(
   enemies: EnemyPlacement[],
   elements: ElementPlacement[],
   fountains: FountainPlacement[],
+  gates: GatePlacement[],
   cols: number,
   rows: number,
+  levelId: string,
   bgPreset: string,
   bgmPreset: string,
   tilePreset: string,
@@ -127,10 +147,10 @@ function exportLevelData(
 
   const lines = [
     `import { TILE_DSP } from '../AutoTile';`,
-    `import { z, e, el, fn } from './levelTools';`,
-    `import type { TileZone, EnemyPlacement, LevelElement, FountainPlacement } from './levelTools';`,
+    `import { z, e, el, fn, gt } from './levelTools';`,
+    `import type { TileZone, EnemyPlacement, LevelElement, FountainPlacement, GateZone } from './levelTools';`,
     ``,
-    `export const LEVEL_ID = '${crypto.randomUUID()}';`,
+    `export const LEVEL_ID = '${levelId}';`,
     ``,
     `export const TILE_COLS = ${cols};`,
     `export const TILE_ROWS = ${rows};`,
@@ -195,6 +215,18 @@ function exportLevelData(
     );
   }
 
+  if (gates.length > 0) {
+    const gateStr = gates
+      .map(g => `  gt(${pad(g.col, 3)}, ${pad(g.row, 2)}, ${pad(g.w, 3)}, ${pad(g.h, 2)}, '${g.targetLevelId}'),`)
+      .join('\n');
+    lines.push(
+      ``,
+      `export const GATES: GateZone[] = [`,
+      gateStr,
+      `];`,
+    );
+  }
+
   return lines.join('\n');
 }
 
@@ -213,6 +245,8 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
   const enemiesRef = useRef<EnemyPlacement[]>([]);
   const elementsRef = useRef<ElementPlacement[]>([]);
   const fountainsRef = useRef<FountainPlacement[]>([]);
+  const gatesRef = useRef<GatePlacement[]>([]);
+  const currentLevelIdRef = useRef<string>('');
   const enemyImagesRef = useRef<Record<EnemyTypeId, HTMLImageElement>>({} as Record<EnemyTypeId, HTMLImageElement>);
   const elementImagesRef = useRef<Record<string, HTMLImageElement>>({});
   const fountainImagesRef = useRef<Record<string, HTMLImageElement>>({});
@@ -263,6 +297,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
   const [saveAsName, setSaveAsName] = useState('');
   const [modalError, setModalError] = useState<string | null>(null);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  const [gateMenu, setGateMenu] = useState<{ gateIndex: number; screenX: number; screenY: number } | null>(null);
 
   // drag state (mouse / single touch)
   const dragRef = useRef({
@@ -458,6 +493,16 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     return true;
   }, [elementDefs, fountainDefs]);
 
+  const getGateAt = useCallback((col: number, row: number): number => {
+    for (let i = gatesRef.current.length - 1; i >= 0; i--) {
+      const g = gatesRef.current[i];
+      if (col >= g.col && col < g.col + g.w && row >= g.row && row < g.row + g.h) return i;
+    }
+    return -1;
+  }, []);
+
+  const isGateCell = (col: number, row: number) => getGateAt(col, row) >= 0;
+
   const canvasRect = () => canvasRef.current!.getBoundingClientRect();
 
   const resizeGrid = useCallback((nextCols: number, nextRows: number) => {
@@ -549,6 +594,11 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       nextFountains.push(fountain);
     }
     fountainsRef.current = nextFountains;
+
+    // Clip gates to new bounds
+    gatesRef.current = gatesRef.current.filter(g =>
+      g.col >= 0 && g.row >= 0 && g.col + g.w <= safeCols && g.row + g.h <= safeRows
+    );
 
     colsRef.current = safeCols;
     rowsRef.current = safeRows;
@@ -773,6 +823,80 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       }
     }
 
+    // gates
+    for (let i = 0; i < gatesRef.current.length; i++) {
+      const gate = gatesRef.current[i];
+      const gx = gate.col * T - panX;
+      const gy = gate.row * T - panY;
+      const gw = gate.w * T;
+      const gh = gate.h * T;
+      if (gx + gw < -T || gy + gh < -T || gx > viewW + T || gy > viewH + T) continue;
+
+      const hasTarget = !!gate.targetLevelId;
+      const targetLevel = hasTarget ? LEVELS.find(l => l.id === gate.targetLevelId) : null;
+
+      // fill
+      ctx.fillStyle = hasTarget ? 'rgba(200, 120, 255, 0.30)' : 'rgba(200, 120, 255, 0.18)';
+      ctx.fillRect(gx, gy, gw, gh);
+      // border
+      ctx.strokeStyle = hasTarget ? 'rgba(200, 140, 255, 0.85)' : 'rgba(200, 120, 255, 0.55)';
+      ctx.lineWidth = 2 / zoom;
+      ctx.setLineDash([6 / zoom, 4 / zoom]);
+      ctx.strokeRect(gx, gy, gw, gh);
+      ctx.setLineDash([]);
+
+      // label
+      const labelSize = Math.max(8, 11 / zoom);
+      ctx.font = `bold ${labelSize}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const cx = gx + gw / 2;
+      const cy = gy + gh / 2;
+
+      if (!hasTarget) {
+        // exclamation: no level attached
+        ctx.fillStyle = '#ff6644';
+        ctx.font = `bold ${Math.max(12, 16 / zoom)}px monospace`;
+        ctx.fillText('!', cx, cy - labelSize * 0.6);
+        ctx.font = `${Math.max(7, 9 / zoom)}px monospace`;
+        ctx.fillStyle = '#ff8866';
+        ctx.fillText('no level', cx, cy + labelSize * 0.6);
+      } else {
+        const side = getGateSide(gate, mapCols, mapRows);
+        const opp = oppositeSide(side);
+        const targetGates = (targetLevel?.gates ?? []);
+        const hasReturn = targetGates.some(tg => {
+          if (tg.targetLevelId !== currentLevelIdRef.current) return false;
+          const tSide = getGateSide(tg, targetLevel!.cols, targetLevel!.rows);
+          return tSide === opp;
+        });
+
+        ctx.fillStyle = '#d8a0ff';
+        ctx.fillText(targetLevel?.name ?? '?', cx, cy - (hasReturn ? 0 : labelSize * 0.4));
+
+        if (!hasReturn) {
+          ctx.fillStyle = '#ff8844';
+          ctx.font = `${Math.max(7, 9 / zoom)}px monospace`;
+          ctx.fillText('! no return gate', cx, cy + labelSize * 0.7);
+        }
+      }
+    }
+
+    // gate placement preview
+    if (toolRef.current === 'gate' && hoverGridRef.current.inside) {
+      const { col, row } = hoverGridRef.current;
+      const existing = getGateAt(col, row);
+      if (existing < 0) {
+        const px = col * T - panX;
+        const py = row * T - panY;
+        ctx.fillStyle = 'rgba(200, 120, 255, 0.35)';
+        ctx.fillRect(px, py, T, T);
+        ctx.strokeStyle = 'rgba(200, 140, 255, 0.9)';
+        ctx.lineWidth = 2 / zoom;
+        ctx.strokeRect(px, py, T, T);
+      }
+    }
+
     // player marker
     const pp = playerRef.current;
     if (pp) {
@@ -940,7 +1064,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
   };
 
   const startDrag = (col: number, row: number) => {
-    if (toolRef.current === 'enemy' || toolRef.current === 'element' || toolRef.current === 'fountain') return;
+    if (toolRef.current === 'enemy' || toolRef.current === 'element' || toolRef.current === 'fountain' || toolRef.current === 'gate') return;
     if (toolRef.current === 'water') {
       const mode = isWaterCell(col, row) && !isEdge(col, row, colsRef.current, rowsRef.current) ? 'remove' : 'place';
       dragRef.current = { active: true, mode, lastCol: col, lastRow: row };
@@ -953,7 +1077,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
   };
 
   const continueDrag = (col: number, row: number) => {
-    if (toolRef.current === 'enemy' || toolRef.current === 'element' || toolRef.current === 'fountain') return;
+    if (toolRef.current === 'enemy' || toolRef.current === 'element' || toolRef.current === 'fountain' || toolRef.current === 'gate') return;
     const d = dragRef.current;
     if (!d.active || (col === d.lastCol && row === d.lastRow)) return;
     d.lastCol = col; d.lastRow = row;
@@ -1010,6 +1134,79 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     });
   };
 
+  // Gate drag state: tracks the gate being drawn during a drag
+  const gateDragRef = useRef<{ gateIndex: number; axis: 'h' | 'v' | null; anchorCol: number; anchorRow: number } | null>(null);
+
+  const placeOrRemoveGate = (col: number, row: number) => {
+    const mapCols = colsRef.current;
+    const mapRows = rowsRef.current;
+    if (col < 0 || col >= mapCols || row < 0 || row >= mapRows) return;
+
+    // If clicking on an existing gate tile, remove that gate
+    const existing = getGateAt(col, row);
+    if (existing >= 0) {
+      gatesRef.current.splice(existing, 1);
+      gateDragRef.current = null;
+      return;
+    }
+
+    // Don't place on solid tiles or water
+    if (isSolid(col, row) || isWaterCell(col, row)) return;
+
+    // Start a new 1x1 gate and begin drag tracking
+    const idx = gatesRef.current.length;
+    gatesRef.current.push({ col, row, w: 1, h: 1, targetLevelId: '' });
+    gateDragRef.current = { gateIndex: idx, axis: null, anchorCol: col, anchorRow: row };
+  };
+
+  const continueGateDrag = (col: number, row: number) => {
+    const drag = gateDragRef.current;
+    if (!drag) return;
+    const mapCols = colsRef.current;
+    const mapRows = rowsRef.current;
+    if (col < 0 || col >= mapCols || row < 0 || row >= mapRows) return;
+
+    const { anchorCol, anchorRow } = drag;
+    if (col === anchorCol && row === anchorRow) return;
+
+    // Lock axis on first movement away from anchor
+    if (!drag.axis) {
+      const dx = Math.abs(col - anchorCol);
+      const dy = Math.abs(row - anchorRow);
+      drag.axis = dx >= dy ? 'h' : 'v';
+    }
+
+    const gate = gatesRef.current[drag.gateIndex];
+    if (!gate) return;
+
+    // Rebuild gate span from anchor to current pos along locked axis
+    let startCol: number, startRow: number, w: number, h: number;
+    if (drag.axis === 'h') {
+      const minC = Math.min(anchorCol, col);
+      const maxC = Math.max(anchorCol, col);
+      startCol = minC; startRow = anchorRow; w = maxC - minC + 1; h = 1;
+    } else {
+      const minR = Math.min(anchorRow, row);
+      const maxR = Math.max(anchorRow, row);
+      startCol = anchorCol; startRow = minR; w = 1; h = maxR - minR + 1;
+    }
+
+    // Check all cells in the new span are valid (no solid, water, or other gates)
+    for (let c = startCol; c < startCol + w; c++) {
+      for (let r = startRow; r < startRow + h; r++) {
+        if (isSolid(c, r) || isWaterCell(c, r)) return;
+        const existing = getGateAt(c, r);
+        if (existing >= 0 && existing !== drag.gateIndex) return;
+      }
+    }
+
+    gatesRef.current[drag.gateIndex] = { ...gate, col: startCol, row: startRow, w, h };
+  };
+
+  const endGateDrag = () => {
+    gateDragRef.current = null;
+  };
+
   const openEnemyOverride = (index: number) => {
     const enemy = enemiesRef.current[index];
     setEnemyOverride({
@@ -1054,6 +1251,12 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     const { col, row } = worldToGrid(wx, wy);
 
     if (e.button === 2) {
+      // Right-click on gate: open level selector
+      const gateIndex = getGateAt(col, row);
+      if (gateIndex >= 0) {
+        setGateMenu({ gateIndex, screenX: e.clientX, screenY: e.clientY });
+        return;
+      }
       const enemyIndex = getEnemyAt(col, row);
       if (enemyIndex >= 0) {
         openEnemyOverride(enemyIndex);
@@ -1097,6 +1300,10 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       placeOrRemoveFountain(col, row);
       return;
     }
+    if (toolRef.current === 'gate') {
+      placeOrRemoveGate(col, row);
+      return;
+    }
     startDrag(col, row);
   };
 
@@ -1138,6 +1345,11 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       return;
     }
 
+    if (gateDragRef.current) {
+      continueGateDrag(col, row);
+      return;
+    }
+
     if (!dragRef.current.active) return;
     continueDrag(col, row);
   };
@@ -1148,11 +1360,13 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     panRef.current.active = false;
     resizeRef.current.active = false;
     resizeRef.current.edge = null;
+    endGateDrag();
   };
 
   const onPointerLeave = () => {
     hoverGridRef.current = { col: -1, row: -1, inside: false };
     setHoveredEnemyInfo(null);
+    endGateDrag();
   };
 
   const onWheel = (e: React.WheelEvent) => {
@@ -1217,6 +1431,10 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
         placeOrRemoveFountain(col, row);
         return;
       }
+      if (toolRef.current === 'gate') {
+        placeOrRemoveGate(col, row);
+        return;
+      }
       startDrag(col, row);
     }
   };
@@ -1260,7 +1478,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     for (const t of Array.from(e.changedTouches))
       touchesRef.current.delete(t.identifier);
     if (touchesRef.current.size < 2) pinchRef.current.active = false;
-    if (touchesRef.current.size === 0) dragRef.current.active = false;
+    if (touchesRef.current.size === 0) { dragRef.current.active = false; endGateDrag(); }
   };
 
   // ── tool change ───────────────────────────────────────────────────────────
@@ -1315,6 +1533,9 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       .map(element => ({ id: element.id, col: element.col, row: element.row }));
     fountainsRef.current = ((data as any).fountains ?? [])
       .map((f: any) => ({ id: f.id, col: f.col, row: f.row }));
+    gatesRef.current = (data.gates ?? [])
+      .map(g => ({ col: g.col, row: g.row, w: g.w, h: g.h, targetLevelId: g.targetLevelId }));
+    currentLevelIdRef.current = data.id ?? '';
     playerRef.current = { col: data.spawnCol, row: data.spawnRow - 1 };
     setHasPlayer(true);
     colsRef.current = data.cols;
@@ -1341,6 +1562,8 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     enemiesRef.current = [];
     elementsRef.current = [];
     fountainsRef.current = [];
+    gatesRef.current = [];
+    currentLevelIdRef.current = '';
     setBgPreset('');
     setBgmPreset('');
     setTilePreset(DEFAULT_TILE_PRESET);
@@ -1387,6 +1610,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       return;
     }
     try {
+      const levelId = currentLevelIdRef.current || crypto.randomUUID();
       const content = exportLevelData(
         gridRef.current,
         waterRef.current,
@@ -1394,12 +1618,15 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
         enemiesRef.current,
         elementsRef.current,
         fountainsRef.current,
+        gatesRef.current,
         colsRef.current,
         rowsRef.current,
+        levelId,
         bgPreset,
         bgmPreset,
         tilePreset,
       );
+      currentLevelIdRef.current = levelId;
       await saveLevel(currentFilename, content);
       showStatus(`Saved ${currentFilename}`);
     } catch (e) {
@@ -1416,6 +1643,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
   const handleSaveAsConfirm = async () => {
     if (!saveAsName.trim()) { setModalError('Name is required'); return; }
     try {
+      const nextLevelId = crypto.randomUUID();
       const content = exportLevelData(
         gridRef.current,
         waterRef.current,
@@ -1423,13 +1651,16 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
         enemiesRef.current,
         elementsRef.current,
         fountainsRef.current,
+        gatesRef.current,
         colsRef.current,
         rowsRef.current,
+        nextLevelId,
         bgPreset,
         bgmPreset,
         tilePreset,
       );
       const filename = await saveAsLevel(saveAsName.trim(), content);
+      currentLevelIdRef.current = nextLevelId;
       setCurrentFilename(filename);
       setShowSaveAsModal(false);
       showStatus(`Saved as ${filename}`);
@@ -1445,6 +1676,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     enemiesRef.current = [];
     elementsRef.current = [];
     fountainsRef.current = [];
+    gatesRef.current = [];
     playerRef.current = { col: playerCol, row: playerRow };
     setHasPlayer(true);
     showStatus('Generated random level');
@@ -1480,7 +1712,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     const spawnCol = playerRef.current?.col ?? 5;
     const spawnRow = playerRef.current != null ? playerRef.current.row + 1 : Math.max(1, rowsRef.current - 4);
     const levelData = {
-      id: 0,
+      id: currentLevelIdRef.current || 'test-level',
       name: currentFilename || 'Test Level',
       cols: colsRef.current,
       rows: rowsRef.current,
@@ -1491,6 +1723,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       enemies: enemiesRef.current,
       elements: elementsRef.current,
       fountains: fountainsRef.current,
+      gates: gatesRef.current,
       ...(bgPreset ? { bgPreset } : {}),
       ...(bgmPreset ? { bgmPreset } : {}),
       ...(tilePreset ? { tilePreset } : {}),
@@ -1518,7 +1751,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     <div style={{ position: 'relative', width: '100vw', height: '100vh', overflow: 'hidden' }}>
       <canvas
         ref={canvasRef}
-        style={{ display: 'block', cursor: tool === 'player' || tool === 'enemy' || tool === 'element' || tool === 'fountain' ? 'crosshair' : 'cell', touchAction: 'none' } as React.CSSProperties}
+        style={{ display: 'block', cursor: tool === 'player' || tool === 'enemy' || tool === 'element' || tool === 'fountain' || tool === 'gate' ? 'crosshair' : 'cell', touchAction: 'none' } as React.CSSProperties}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -1583,11 +1816,11 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ color: '#888', fontSize: 11, fontFamily: 'monospace' }}>TOOL</span>
-        {(['tile', 'water', 'player', 'enemy', 'element', 'fountain'] as Tool[]).map(t => {
-          const labels: Record<Tool, string> = { tile: 'Tile', water: 'Water', player: 'Player', enemy: 'Enemies', element: 'Elements', fountain: 'Fountains' };
+        {(['tile', 'water', 'player', 'enemy', 'element', 'fountain', 'gate'] as Tool[]).map(t => {
+          const labels: Record<Tool, string> = { tile: 'Tile', water: 'Water', player: 'Player', enemy: 'Enemies', element: 'Elements', fountain: 'Fountains', gate: 'Gates' };
           const label = labels[t];
-          const activeBg = t === 'water' ? '#1a5f9c' : t === 'enemy' ? '#7b2b47' : t === 'element' ? '#2f7a4a' : t === 'fountain' ? '#2b5a7b' : '#3a5fc8';
-          const activeBorder = t === 'water' ? '#3a9fe8' : t === 'enemy' ? '#c85a7b' : t === 'element' ? '#65c992' : t === 'fountain' ? '#5a9ac8' : '#5a7fe8';
+          const activeBg = t === 'water' ? '#1a5f9c' : t === 'enemy' ? '#7b2b47' : t === 'element' ? '#2f7a4a' : t === 'fountain' ? '#2b5a7b' : t === 'gate' ? '#5b2b7b' : '#3a5fc8';
+          const activeBorder = t === 'water' ? '#3a9fe8' : t === 'enemy' ? '#c85a7b' : t === 'element' ? '#65c992' : t === 'fountain' ? '#5a9ac8' : t === 'gate' ? '#b070e8' : '#5a7fe8';
           return (
             <button
               key={t}
@@ -1670,6 +1903,14 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
             </select>
             <span style={{ color: '#777', fontSize: 11, fontFamily: 'monospace' }}>
               Click to place/remove
+            </span>
+          </div>
+        )}
+        {tool === 'gate' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
+            <span style={{ color: '#888', fontSize: 11, fontFamily: 'monospace' }}>GATE</span>
+            <span style={{ color: '#777', fontSize: 11, fontFamily: 'monospace' }}>
+              LMB place/remove, RMB assign level
             </span>
           </div>
         )}
@@ -1934,6 +2175,46 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
                 Save
               </button>
               <button onClick={() => setShowSaveAsModal(false)} style={btnBase}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Gate Level Selector ──────────────────────────────────────── */}
+      {gateMenu && gatesRef.current[gateMenu.gateIndex] && (
+        <div style={modalOverlay} onClick={() => setGateMenu(null)}>
+          <div style={modalBox} onClick={e => e.stopPropagation()}>
+            <h3 style={modalTitle}>Assign Level to Gate</h3>
+            <label style={{ display: 'block', color: '#aaa', fontSize: 12, fontFamily: 'monospace', marginBottom: 6 }}>
+              Select target level
+            </label>
+            <select
+              value={gatesRef.current[gateMenu.gateIndex]?.targetLevelId ?? ''}
+              onChange={e => {
+                const gate = gatesRef.current[gateMenu.gateIndex];
+                if (gate) {
+                  gatesRef.current[gateMenu.gateIndex] = { ...gate, targetLevelId: e.target.value };
+                }
+                setGateMenu(null);
+              }}
+              autoFocus
+              style={{
+                width: '100%', padding: '10px 12px', background: 'rgba(10,10,20,0.9)',
+                border: '1px solid #556', borderRadius: 6, color: '#ddd', fontSize: 14,
+                fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box',
+              }}
+            >
+              <option value="">-- None --</option>
+              {LEVELS
+                .filter(l => l.id !== currentLevelIdRef.current)
+                .map(l => (
+                  <option key={l.id} value={l.id}>{l.name}</option>
+                ))}
+            </select>
+            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+              <button onClick={() => setGateMenu(null)} style={btnBase}>
                 Cancel
               </button>
             </div>
