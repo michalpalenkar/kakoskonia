@@ -13,7 +13,7 @@ import * as tami_level_backup from "./tami_level_backup";
 import * as vyhlad_na_rakusko from "./vyhlad_na_rakusko";
 
 export interface LevelData {
-  id: number;
+  id: string;
   name: string;
   cols: number;
   rows: number;
@@ -31,7 +31,7 @@ export interface LevelData {
 
 export const LEVELS: LevelData[] = [
   {
-    id: 1,
+    id: dunaj.LEVEL_ID,
     name: "Dunaj",
     cols: dunaj.TILE_COLS,
     rows: dunaj.TILE_ROWS,
@@ -47,7 +47,7 @@ export const LEVELS: LevelData[] = [
     fountains: (dunaj as any).FOUNTAINS ?? [],
   },
   {
-    id: 2,
+    id: evin_level.LEVEL_ID,
     name: "Evin level",
     cols: evin_level.TILE_COLS,
     rows: evin_level.TILE_ROWS,
@@ -63,7 +63,7 @@ export const LEVELS: LevelData[] = [
     fountains: (evin_level as any).FOUNTAINS ?? [],
   },
   {
-    id: 3,
+    id: hlavacikova.LEVEL_ID,
     name: "Hlavacikova",
     cols: hlavacikova.TILE_COLS,
     rows: hlavacikova.TILE_ROWS,
@@ -79,7 +79,7 @@ export const LEVELS: LevelData[] = [
     fountains: (hlavacikova as any).FOUNTAINS ?? [],
   },
   {
-    id: 4,
+    id: kedy_pucdej.LEVEL_ID,
     name: "Kedy pucdej",
     cols: kedy_pucdej.TILE_COLS,
     rows: kedy_pucdej.TILE_ROWS,
@@ -95,7 +95,7 @@ export const LEVELS: LevelData[] = [
     fountains: (kedy_pucdej as any).FOUNTAINS ?? [],
   },
   {
-    id: 5,
+    id: rest_save_test.LEVEL_ID,
     name: "Rest save test",
     cols: rest_save_test.TILE_COLS,
     rows: rest_save_test.TILE_ROWS,
@@ -111,7 +111,7 @@ export const LEVELS: LevelData[] = [
     fountains: (rest_save_test as any).FOUNTAINS ?? [],
   },
   {
-    id: 6,
+    id: tami_level_backup.LEVEL_ID,
     name: "Tami level backup",
     cols: tami_level_backup.TILE_COLS,
     rows: tami_level_backup.TILE_ROWS,
@@ -127,7 +127,7 @@ export const LEVELS: LevelData[] = [
     fountains: (tami_level_backup as any).FOUNTAINS ?? [],
   },
   {
-    id: 7,
+    id: vyhlad_na_rakusko.LEVEL_ID,
     name: "Vyhlad na rakusko",
     cols: vyhlad_na_rakusko.TILE_COLS,
     rows: vyhlad_na_rakusko.TILE_ROWS,

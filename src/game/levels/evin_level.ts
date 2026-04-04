@@ -2,6 +2,8 @@ import { TILE_DSP } from '../AutoTile';
 import { z, e } from './levelTools';
 import type { TileZone, EnemyPlacement } from './levelTools';
 
+export const LEVEL_ID = 'c56a4180-65a2-4ac4-a3d4-5e6f7a8b9c0d';
+
 export const TILE_COLS = 100;
 export const TILE_ROWS = 26;
 

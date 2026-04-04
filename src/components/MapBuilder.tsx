@@ -130,6 +130,8 @@ function exportLevelData(
     `import { z, e, el, fn } from './levelTools';`,
     `import type { TileZone, EnemyPlacement, LevelElement, FountainPlacement } from './levelTools';`,
     ``,
+    `export const LEVEL_ID = '${crypto.randomUUID()}';`,
+    ``,
     `export const TILE_COLS = ${cols};`,
     `export const TILE_ROWS = ${rows};`,
     ``,

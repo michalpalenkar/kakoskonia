@@ -1572,7 +1572,8 @@ export class Game {
   }
 
   private buildSkyClouds(): SkyCloud[] {
-    const rand = seededRand((this.level.id * 123457) ^ 0x53a9c5d7);
+    const idHash = this.level.id.split('').reduce((h, c) => (((h << 5) + h) ^ c.charCodeAt(0)) >>> 0, 5381);
+    const rand = seededRand((idHash * 123457) ^ 0x53a9c5d7);
     const out: SkyCloud[] = [];
     for (let i = 0; i < 10; i++) {
       out.push({

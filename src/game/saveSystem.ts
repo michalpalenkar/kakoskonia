@@ -1,7 +1,7 @@
 const STORAGE_KEY = 'kakoskonia-save';
 
 export interface SaveData {
-  levelId: number;
+  levelId: string;
   playerX: number;
   playerY: number;
   health: number;
